@@ -29,8 +29,11 @@ const DEBOUNCE_MS = 400;
 
 export function useEdges(
   apiBase, dataset, viewport, imageSize, enabled,
-  minStrength, hiddenLrms, lrmCatalogue, density = 1.0
+  minStrength, hiddenLrms, lrmCatalogue, density = 1.0,
+  edgeFile = "edges.parquet"
 ) {
+  // Which edge-source parquet to query; appended to every /edges request.
+  const efParam = `?edge_file=${encodeURIComponent(edgeFile)}`;
   // ── Structural state ──────────────────────────────────────────────────────
   const [structuralEdges, setStructuralEdges] = useState([]);
   const [loadingStructural, setLoadingStructural] = useState(false);
@@ -68,7 +71,7 @@ export function useEdges(
       if (minStrength != null && minStrength > 0) body.min_strength = minStrength;
 
       try {
-        const res = await fetch(`${apiBase}/edges/${dataset}/query-grouped`, {
+        const res = await fetch(`${apiBase}/edges/${dataset}/query-grouped${efParam}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
@@ -83,7 +86,7 @@ export function useEdges(
     }, DEBOUNCE_MS);
 
     return () => clearTimeout(structTimerRef.current);
-  }, [apiBase, dataset, viewport, imageSize, enabled, minStrength, density]); // eslint-disable-line
+  }, [apiBase, dataset, viewport, imageSize, enabled, minStrength, density, efParam]); // eslint-disable-line
 
   // ── Effect 2: score fetch ──────────────────────────────────────────────────
   // Runs when viewport OR hiddenLrms changes.
@@ -139,7 +142,7 @@ export function useEdges(
       }
 
       try {
-        const res = await fetch(`${apiBase}/edges/${dataset}/query-scores`, {
+        const res = await fetch(`${apiBase}/edges/${dataset}/query-scores${efParam}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
@@ -163,7 +166,7 @@ export function useEdges(
     }, DEBOUNCE_MS);
 
     return () => clearTimeout(scoreTimerRef.current);
-  }, [apiBase, dataset, viewport, imageSize, enabled, hiddenLrms, lrmCatalogue]); // eslint-disable-line
+  }, [apiBase, dataset, viewport, imageSize, enabled, hiddenLrms, lrmCatalogue, efParam]); // eslint-disable-line
 
   // ── Merge: overlay scores onto structural edges ───────────────────────────
   // edgeScores === null → no filter; use score_sum from structural as visible_score_sum

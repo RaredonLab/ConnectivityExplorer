@@ -982,6 +982,7 @@ const EDGE_SKIP_COLS = new Set(["x1", "y1", "x2", "y2", "edge", "sending_cell", 
 function EdgeSection() {
   const {
     apiBase, dataset,
+    edgeFile, setEdgeFile,
     layers, setLayerProp,
     edgeMinStrength, setEdgeMinStrength,
     edgeColorBy, setEdgeColorBy,
@@ -1005,19 +1006,42 @@ function EdgeSection() {
   const commitTimer = useRef(null);
   const [edgeSchema, setEdgeSchema] = useState(null);
   const [lrmSearch, setLrmSearch] = useState("");
+  // List of edge-source files in the current dataset: [{id, label}].
+  const [edgeFiles, setEdgeFiles] = useState([]);
 
+  // ── edge-source parquet list (issue #46) ────────────────────────────────────
+  // Fetch the available edge files for the dataset and select the backend-provided
+  // default (legacy top-level edges.parquet if present, else the first). Falls back
+  // gracefully to a single implicit "edges.parquet" if the endpoint returns nothing.
   useEffect(() => {
-    fetch(`${apiBase}/edges/${dataset}/schema`)
+    if (!dataset) return;
+    fetch(`${apiBase}/edges/${dataset}/files`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        const files = Array.isArray(data?.files) ? data.files : [];
+        setEdgeFiles(files);
+        if (files.length > 0) {
+          const cur = useStore.getState().edgeFile;
+          const ids = files.map((f) => f.id);
+          if (!ids.includes(cur)) setEdgeFile(data.default ?? ids[0]);
+        }
+      })
+      .catch(() => setEdgeFiles([]));
+  }, [apiBase, dataset]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const efParam = `?edge_file=${encodeURIComponent(edgeFile)}`;
+  useEffect(() => {
+    fetch(`${apiBase}/edges/${dataset}/schema${efParam}`)
       .then((r) => (r.ok ? r.json() : null))
       .then(setEdgeSchema)
       .catch(() => {});
     if (lrmCatalogue.length === 0) {
-      fetch(`${apiBase}/edges/${dataset}/lrm-catalogue`)
+      fetch(`${apiBase}/edges/${dataset}/lrm-catalogue${efParam}`)
         .then((r) => (r.ok ? r.json() : []))
         .then(setLrmCatalogue)
         .catch(() => {});
     }
-  }, [apiBase, dataset]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [apiBase, dataset, efParam]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleStrength = (e) => {
     const v = parseFloat(e.target.value);
@@ -1040,6 +1064,22 @@ function EdgeSection() {
 
   return (
     <div style={{ marginBottom: 8 }}>
+      {/* Edge-source picker (issue #46) — only shown when the dataset has more than
+          one edge file. Applies to every open viewer panel. */}
+      {edgeFiles.length > 1 && (
+        <div style={{ marginBottom: 8 }}>
+          <select
+            value={edgeFile}
+            onChange={(e) => setEdgeFile(e.target.value)}
+            style={SELECT_STYLE}
+            title="Which edge-source parquet to render"
+          >
+            {edgeFiles.map((f) => (
+              <option key={f.id} value={f.id}>{f.label}</option>
+            ))}
+          </select>
+        </div>
+      )}
       <LayerRowBase
         label="Edges"
         color="#f90"
@@ -1222,7 +1262,7 @@ function EdgeSection() {
               clamp={edgeColorClamp} setClamp={setEdgeColorClamp} accentColor="#f90" />
           )}
           {mode === "metadata" && field && isCategorical && (
-            <EdgeCategoricalLegend field={field} apiBase={apiBase} dataset={dataset} />
+            <EdgeCategoricalLegend field={field} apiBase={apiBase} dataset={dataset} edgeFile={edgeFile} />
           )}
 
           {/* ── LRM Mechanisms checklist ─────────────────────────────── */}
@@ -1281,12 +1321,13 @@ function EdgeSection() {
   );
 }
 
-function EdgeCategoricalLegend({ field, apiBase, dataset }) {
+function EdgeCategoricalLegend({ field, apiBase, dataset, edgeFile = "edges.parquet" }) {
   const [categories, setCategories] = useState([]);
 
   useEffect(() => {
     if (!field) return;
-    fetch(`${apiBase}/edges/${dataset}/edge-color-values`, {
+    const efParam = `?edge_file=${encodeURIComponent(edgeFile)}`;
+    fetch(`${apiBase}/edges/${dataset}/edge-color-values${efParam}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ mode: "metadata", field }),
@@ -1294,7 +1335,7 @@ function EdgeCategoricalLegend({ field, apiBase, dataset }) {
       .then((r) => r.json())
       .then((d) => { if (d.type === "categorical") setCategories(d.categories); })
       .catch(() => {});
-  }, [apiBase, dataset, field]);
+  }, [apiBase, dataset, field, edgeFile]);
 
   if (!categories.length) return null;
   return (
