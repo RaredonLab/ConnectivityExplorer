@@ -8,8 +8,30 @@ export const useStore = create((set, get) => ({
   dataset: null,             // initialized from /spatial/datasets on first load
   activeImage: "morphology", // which OME-TIFF is loaded as the background
 
-  setDataset: (dataset) => set({ dataset, selectedGenes: null, allGenes: [], genesLoaded: false, platformCapabilities: null, categoryColorOverrides: {}, transcriptColorOverrides: {} }),
+  // edgeFile: which edge-source parquet the app renders. "edges.parquet" is the
+  // legacy top-level default; multiple sets live under the dataset's edges/ folder
+  // and are identified as "edges/<name>.parquet" (see issue #46). Applies to all
+  // open viewer panels — the single sidebar drives every panel equally.
+  edgeFile: "edges.parquet",
+
+  // Switching datasets resets all edge-file-scoped state so a stale LRM catalogue,
+  // filter, selection, or color range from the previous dataset never leaks through.
+  setDataset: (dataset) => set({
+    dataset, selectedGenes: null, allGenes: [], genesLoaded: false,
+    platformCapabilities: null, categoryColorOverrides: {}, transcriptColorOverrides: {},
+    edgeFile: "edges.parquet", lrmCatalogue: [], hiddenLrms: new Set(),
+    selectedEdge: null, edgeColorRange: { vmin: null, vmax: null },
+    edgeColorClamp: { low: null, high: null },
+  }),
   setActiveImage: (activeImage) => set({ activeImage }),
+
+  // Switching the edge file resets the same edge-scoped state: the LRM catalogue,
+  // hidden-LRM filter, current selection, and auto-computed color range/clamp are
+  // all specific to a given edges.parquet and must be re-derived for the new file.
+  setEdgeFile: (edgeFile) => set({
+    edgeFile, lrmCatalogue: [], hiddenLrms: new Set(), selectedEdge: null,
+    edgeColorRange: { vmin: null, vmax: null }, edgeColorClamp: { low: null, high: null },
+  }),
 
   // ── Platform capabilities (fetched from /spatial/{dataset}/info) ──────────
   // null = not yet loaded; object = { has_morphology, has_transcripts, has_boundaries, unit_label }

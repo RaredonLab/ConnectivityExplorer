@@ -125,7 +125,7 @@ function ViewerPanel({ panelIndex }) {
     cellColorEnabled, colorBy, cellColorPalette, categoryColorOverrides,
     allGenes, selectedGenes, transcriptColorOverrides,
     selectedCell, setSelectedCell,
-    edgeMinStrength, edgeDensity,
+    edgeMinStrength, edgeDensity, edgeFile,
     edgeColorBy, edgeColorPalette, edgeDirectional, showAutocrine,
     edgeWidth, showArrowheads, arrowStyle, arrowheadScale,
     edgeOffset,
@@ -541,7 +541,7 @@ function ViewerPanel({ panelIndex }) {
 
   const { edges, loading: edgesLoading } = useEdges(
     apiBase, dataset, viewport, imageSize, edgesVisible || tissueGraphVisible,
-    edgeMinStrength, hiddenLrms, lrmCatalogue, edgeDensity
+    edgeMinStrength, hiddenLrms, lrmCatalogue, edgeDensity, edgeFile
   );
 
   const { colorValues, vmin: cellVmin, vmax: cellVmax, loading: cellColorsLoading } = useCellColors(
@@ -554,7 +554,7 @@ function ViewerPanel({ panelIndex }) {
 
   const edgeColorEnabled = edgeColorBy.mode !== "default";
   const { colorValues: edgeColorValues, vmin: edgeVmin, vmax: edgeVmax, p95: edgeP95, loading: edgeColorsLoading } = useEdgeColors(
-    apiBase, dataset, edgeColorBy, hiddenLrms, lrmCatalogue, edgeColorPalette, edgeColorEnabled, edgeColorClamp, edges
+    apiBase, dataset, edgeColorBy, hiddenLrms, lrmCatalogue, edgeColorPalette, edgeColorEnabled, edgeColorClamp, edges, edgeFile
   );
   useEffect(() => {
     if (panelIndex === 0) setEdgeColorRange(edgeVmin, edgeVmax);
@@ -1011,6 +1011,7 @@ function ViewerPanel({ panelIndex }) {
           apiBase={apiBase}
           dataset={dataset}
           edgeId={selectedEdge}
+          edgeFile={edgeFile}
           onClose={() => setSelectedEdge(null)}
         />
       )}

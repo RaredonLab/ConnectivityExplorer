@@ -167,6 +167,10 @@ def main():
     ap.add_argument("--autocrine-fraction", type=float, default=0.15,
                     help="Fraction of cells with autocrine self-loops")
     ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--out", default="edges.parquet",
+                    help="Output path relative to the dataset dir. Use e.g. "
+                         "'edges/edge.raw.minimum.parquet' to add a selectable "
+                         "edge set to the dataset's edges/ folder (issue #46).")
     args = ap.parse_args()
 
     here = Path(__file__).parent
@@ -175,7 +179,8 @@ def main():
     df = make_edges(dataset_dir, k_neighbors=args.k, lrms_per_pair=args.lrms,
                     autocrine_fraction=args.autocrine_fraction, seed=args.seed)
 
-    out = dataset_dir / "edges.parquet"
+    out = dataset_dir / args.out
+    out.parent.mkdir(parents=True, exist_ok=True)
     df.to_parquet(out, index=False)
     print(f"Wrote {out}")
 

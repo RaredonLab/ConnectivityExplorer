@@ -37,7 +37,15 @@ def _reader(dataset: str, edge_file: str = "edges.parquet") -> EdgeReader:
     path = DATA_ROOT / dataset
     if not path.exists():
         raise HTTPException(404, f"Dataset '{dataset}' not found")
-    edge_path = path / edge_file
+    # edge_file may be a plain filename ("edges.parquet") or a relative sub-path
+    # inside the dataset ("edges/edge.raw.minimum.parquet"). Resolve it and confirm
+    # it stays within the dataset folder — guards against path traversal ("../..").
+    dataset_root = path.resolve()
+    edge_path = (path / edge_file).resolve()
+    try:
+        edge_path.relative_to(dataset_root)
+    except ValueError:
+        raise HTTPException(400, f"Invalid edge file path '{edge_file}'")
     if not edge_path.exists():
         raise HTTPException(404, f"Edge file '{edge_file}' not found in dataset '{dataset}'")
     # Resolve pixel_size from the spatial reader so coordinate conversion is
@@ -101,12 +109,37 @@ def query_edges(
 
 @router.get("/{dataset}/files")
 def list_edge_files(dataset: str):
-    """List all .parquet files in the dataset folder that can be used as edge sources."""
+    """
+    List the edge-source parquet files available for a dataset.
+
+    Discovery is deliberately scoped so it never picks up cells / transcripts /
+    boundary parquet files that live at the top level of the dataset:
+      1. The legacy top-level ``edges.parquet`` (if present) — listed first so it
+         remains the default; keeps single-file datasets working unchanged.
+      2. Every ``*.parquet`` inside the dedicated ``edges/`` subfolder — the place
+         users drop multiple pre-computed edge sets (see issue #46).
+
+    Each returned entry is an identifier that can be passed straight back as the
+    ``edge_file`` query param. ``label`` is a display name (folder + ``.parquet``
+    stripped). ``default`` names the identifier the frontend should select first.
+    """
     path = DATA_ROOT / dataset
     if not path.exists():
         raise HTTPException(404, f"Dataset '{dataset}' not found")
-    parquet_files = [f.name for f in path.glob("*.parquet")]
-    return {"files": parquet_files}
+
+    files: list[dict] = []
+    # Legacy top-level file first (stable default for existing datasets).
+    legacy = path / "edges.parquet"
+    if legacy.exists():
+        files.append({"id": "edges.parquet", "label": "edges"})
+    # Additional edge sets in the dedicated subfolder, sorted for stable ordering.
+    edges_dir = path / "edges"
+    if edges_dir.is_dir():
+        for f in sorted(edges_dir.glob("*.parquet")):
+            files.append({"id": f"edges/{f.name}", "label": f.stem})
+
+    default = files[0]["id"] if files else "edges.parquet"
+    return {"files": files, "default": default}
 
 
 class EdgeGroupedQueryRequest(BaseModel):

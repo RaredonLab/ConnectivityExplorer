@@ -79,7 +79,9 @@ backend/
       tiles.py               DZI descriptor + tile serving; auto-builds pyramid on first request
       spatial.py             Platform-agnostic router: all /spatial/... endpoints
       xenium.py              DEPRECATED — kept for reference; not registered in main.py
-      edges.py               edge query, LRM catalogue, edge color values, edge detail
+      edges.py               edge query, LRM catalogue, edge color values, edge detail;
+                             all endpoints take an edge_file param (multi-file support);
+                             /files lists edge sources (top-level + edges/ folder)
       layers.py              generic parquet layer router
     readers/
       base_reader.py         Abstract base class — SpatialDatasetReader interface
@@ -203,12 +205,65 @@ of how many color-by requests arrive.
 
 ---
 
+## Multiple Edge Files (edges/ folder)
+
+A dataset can carry more than one edge set so users can flip between different
+computational approaches (e.g. raw-count vs. normalized scoring) on the **same**
+tissue without duplicating the cell / transcript / boundary parquet files. This is
+issue #46.
+
+```
+dataset_dir/
+  experiment.xenium
+  cells.parquet                        ← untouched by this feature
+  transcripts.parquet                  ← untouched
+  cell_boundaries.parquet              ← untouched
+  edges.parquet                        ← optional legacy top-level file (still the default)
+  edges/                               ← dedicated folder for additional edge sets
+    edge.raw.minimum.parquet
+    edge.normalized.product.parquet
+```
+
+Every file (top-level and in `edges/`) follows the same `edges.parquet` schema
+documented below. Generate extra sets with
+`sample_data/make_edges.py --out edges/<name>.parquet …`.
+
+**Discovery** — `GET /edges/{dataset}/files` returns
+`{ files: [{id, label}], default }`. It looks in exactly two places so it never
+sweeps up cells/transcripts/boundary parquet: the legacy top-level `edges.parquet`
+(listed first, kept as the default for backward compatibility) and every `*.parquet`
+in the `edges/` subfolder. `id` is the value passed back as the `edge_file` query
+param (e.g. `"edges/edge.raw.minimum.parquet"`); `label` is the display name
+(folder + `.parquet` stripped).
+
+**Backend** — every `/edges/*` endpoint already accepted an `edge_file` query param
+(default `edges.parquet`); the reader cache in `edges.py` is keyed by
+`(dataset, edge_file)`. `_reader()` resolves `edge_file` under the dataset directory
+and rejects anything that escapes it (path-traversal guard → 400; missing file → 404).
+
+**Frontend** — a single global `edgeFile` in the store applies to **all** open viewer
+panels (see the Split-Screen note; a per-panel edge file was deliberately deferred
+because LRM catalogue / color ranges are edge-file-specific and the sidebar is shared).
+The picker is a `<select>` at the top of the Edge Data section in `LayerPanel.jsx`,
+shown only when the dataset has >1 edge file. `setEdgeFile` and `setDataset` both
+reset the edge-file-scoped state (`lrmCatalogue`, `hiddenLrms`, `selectedEdge`,
+`edgeColorRange`, `edgeColorClamp`) so stale LRM/color state from the previous file
+never leaks. `edgeFile` is threaded as `?edge_file=…` through all six edge fetch
+sites: `useEdges` (query-grouped, query-scores), `useEdgeColors` (edge-color-values),
+`EdgeSection` (schema, lrm-catalogue), `EdgeCategoricalLegend` (edge-color-values),
+and `EdgeInfoPanel` (edge detail).
+
+---
+
 ## State Management (store.js)
 
 All shared state lives in a single Zustand store. Key sections:
 
 - **Dataset / image**: `dataset` (null on init, auto-set from `/spatial/datasets`),
   `activeImage` (which OME-TIFF to show; auto-set from `/spatial/{dataset}/images`)
+- **Edge file**: `edgeFile` (default `"edges.parquet"`) — which edge-source parquet to
+  render; global (applies to all panels). `setEdgeFile` / `setDataset` reset the
+  edge-file-scoped state. See "Multiple Edge Files" above.
 - **Layer visibility**: `layers` object — each layer has `visible` + `opacity`;
   `cellSegments` also has `outlineOpacity` (independent from fill opacity)
 - **Cell color**: `cellColorEnabled`, `colorBy` (`mode`: off/gene_set/metadata, `field`),
@@ -330,6 +385,10 @@ Results set `selectedCell` or `selectedEdge` in the store.
 
 **What is shared (global store):**
 - All layer toggles, opacities, color-by settings, LRM filter, edge density, etc.
+- `edgeFile` — the selected edge-source parquet applies to both panels. A per-panel
+  edge file was deferred (issue #46 discussion): LRM catalogue + color ranges are
+  edge-file-specific, and the single sidebar can't drive two different edge sets
+  equally. Revisit if side-by-side comparison of different edge files is needed.
 - `selectedCell`, `selectedEdge` (global — EdgeInfoPanel only renders in panel 0)
 - `imageSize` (both panels open the same DZI; panel 0 sets it, panel 1 may also set
   the same values redundantly — harmless)

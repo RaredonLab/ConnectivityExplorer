@@ -93,6 +93,33 @@ write_parquet(edges_df, file.path(dataset_dir, "edges.parquet"))
 
 ---
 
+## Multiple edge sets per dataset
+
+To compare different computational approaches (e.g. raw vs. normalized scoring) on
+the same tissue without duplicating the cell / transcript / boundary files, write
+additional edge files (same schema) into an `edges/` subfolder of the dataset:
+
+```
+dataset_dir/
+  edges.parquet                          # optional legacy default
+  edges/
+    edge.raw.minimum.parquet
+    edge.normalized.product.parquet
+```
+
+```r
+dir.create(file.path(dataset_dir, "edges"), showWarnings = FALSE)
+write_parquet(edges_raw,        file.path(dataset_dir, "edges", "edge.raw.minimum.parquet"))
+write_parquet(edges_normalized, file.path(dataset_dir, "edges", "edge.normalized.product.parquet"))
+```
+
+The viewer shows a dropdown (top of the Edge Data panel) to flip between them; the
+dropdown label is the filename with the folder and `.parquet` extension stripped.
+The top-level `edges.parquet`, if present, remains the default selection. See
+`GET /edges/<dataset>/files`.
+
+---
+
 ## Validation
 
 ```bash

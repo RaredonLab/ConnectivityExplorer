@@ -29,7 +29,7 @@ const ROW_STYLE = {
   borderBottom: "1px solid #222",
 };
 
-export default function EdgeInfoPanel({ apiBase, dataset, edgeId, onClose }) {
+export default function EdgeInfoPanel({ apiBase, dataset, edgeId, edgeFile = "edges.parquet", onClose }) {
   const [detail, setDetail] = useState(null);
   const [loading, setLoading] = useState(false);
 
@@ -37,12 +37,13 @@ export default function EdgeInfoPanel({ apiBase, dataset, edgeId, onClose }) {
     if (!edgeId) return;
     setLoading(true);
     setDetail(null);
-    fetch(`${apiBase}/edges/${dataset}/edge/${encodeURIComponent(edgeId)}`)
+    const efParam = `?edge_file=${encodeURIComponent(edgeFile)}`;
+    fetch(`${apiBase}/edges/${dataset}/edge/${encodeURIComponent(edgeId)}${efParam}`)
       .then((r) => (r.ok ? r.json() : null))
       .then(setDetail)
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [apiBase, dataset, edgeId]);
+  }, [apiBase, dataset, edgeId, edgeFile]);
 
   const totalScore = detail?.lrms?.reduce((s, r) => s + (r.score ?? 0), 0) ?? 0;
 
