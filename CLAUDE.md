@@ -560,6 +560,52 @@ pre-computed server-side.
 
 ---
 
+## Spatial Query Path (readers/duck.py)
+
+`transcripts()` and `cell_boundaries()` query parquet through DuckDB rather than loading
+it into pandas. `readers/duck.py` holds the shared pieces — `connect()`, `scan()`,
+`columns()`, `bbox_predicate()`, `in_predicate()`, `reservoir_sample()`, `to_records()` —
+so every reader builds queries the same way. `EdgeReader` predates it and has its own
+equivalent helpers; the two should converge.
+
+**The reason is memory, not raw speed.** The old path did
+`pq.read_table(...).to_pandas()` and masked in pandas, which materializes the whole file
+on every viewport change. Measured on a synthetic 40M-row / 0.78 GB transcripts file,
+one zoomed-in viewport query:
+
+| | peak RSS | wall time |
+|---|---|---|
+| pandas full read + mask | 2903 MB | 912 ms |
+| DuckDB streaming | 233 MB | 1369 ms |
+
+12× less memory. Production runs on a 16 GB droplet, so a multi-GB `transcripts.parquet`
+under the old path would OOM well before it was slow. DuckDB is somewhat *slower* here
+because the file is not spatially sorted (see What's Not Built Yet #1) — pruning cannot
+skip anything, so it pays predicate-evaluation cost without the row-group savings. Fixing
+the layout closes that gap and then some.
+
+Things to preserve when editing these methods:
+
+- **`total` is a pre-sample count.** Both endpoints return `{rows, total}` where `total` is
+  the count *after* bbox/gene filtering but *before* sampling. `useCellBoundaries` divides
+  its ~5K target by `total` to pick the next fraction, so returning a post-sample count
+  makes the auto-fraction oscillate.
+- **Boundaries select whole cells, never loose vertices.** A cell qualifies if *any* vertex
+  falls in the bbox, and then all of its vertices are returned. Filtering vertices directly
+  clips cells at the viewport edge into torn polygons — measured at 97 clipped cells on the
+  bundled breast dataset before this changed.
+- **Sampling is seeded** (`duck.SAMPLE_SEED`). Re-fetching an unchanged viewport must return
+  the same rows or the layer visibly flickers.
+- **`USING SAMPLE` goes on a subquery** wrapping the filtered SELECT. Applied alongside a
+  WHERE clause, DuckDB may sample before filtering.
+- **DuckDB cannot bind numpy scalars.** `bbox_predicate()` casts to builtin `float` for
+  this reason.
+- A fresh `connect()` per call is deliberate — DuckDB's global connection is not
+  thread-safe and returns corrupt results under FastAPI's threadpool rather than raising.
+  It costs ~5 ms, which is noise next to the scan.
+
+---
+
 ## Color System
 
 `valueToColor(value, vmin, vmax, palette)` in `colormap.js` maps a scalar to RGBA.
@@ -710,15 +756,20 @@ OSD ↔ deck.gl coordinate bridge, since nothing will catch a regression automat
 
 ## What's Not Built Yet
 
-1. **Spatial reads have no streaming path** — this is the biggest remaining performance
-   gap. `XeniumReader._read_parquet()` does an uncached `pq.read_table(...).to_pandas()`
-   and then filters by bbox *in pandas*, so every viewport change re-reads the entire
-   `transcripts.parquet` / `cell_boundaries.parquet` before discarding everything outside
-   the box. On a full Xenium run that read dominates the cost of a pan. The edge path
-   already solved exactly this with DuckDB predicate pushdown — porting `transcripts()`
-   and `cell_boundaries()` to the `EdgeReader` pattern is the highest-leverage change
-   available, and the pattern to copy is already in the repo. (`_cells_full()` and
-   `_load_supplemental_metadata()` *are* cached, but those are the small tables.)
+1. **Spatial queries are not yet spatially indexed.** `transcripts()` and
+   `cell_boundaries()` now stream through DuckDB (see the Spatial Query Path section),
+   which fixed the memory problem, but **row-group pruning does not currently help**:
+   Xenium writes `transcripts.parquet` in row order, not spatial order, with very large
+   row groups. Measured on the bundled breast dataset — 1.1M rows in **2** row groups,
+   the first spanning the entire x-range. DuckDB therefore still scans every row to
+   evaluate the bbox predicate.
+
+   Sorting the file spatially and rewriting it with small row groups makes the statistics
+   selective and is dramatically faster. Measured on a synthetic 40M-row / 0.78 GB file,
+   zoomed-in viewport query: **COUNT 206 ms → 9 ms, SELECT 1010 ms → 29 ms**, for a
+   one-time 4.1 s sort. That is the natural next step, and it fits the existing
+   "build a derived artifact on first access and cache it" pattern that `ensure_pyramid`
+   already uses for tiles.
 
 2. **Supplemental metadata is not shown in the cell info panel** — `CellInfoPanel.jsx`
    renders a hardcoded field list (`cell_id`, x, y, `transcript_counts`, `total_counts`,

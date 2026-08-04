@@ -10,10 +10,16 @@ import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
 
+from app.readers import duck
 from app.readers.base_reader import SpatialDatasetReader
 
 
 _UNSET = object()  # sentinel: "not yet loaded" vs "loaded, no data"
+
+# Hard ceiling on transcripts returned in one response, independent of `fraction`.
+# Guards against a request for fraction=1.0 over a whole-tissue viewport trying to
+# serialize tens of millions of rows.
+_MAX_TRANSCRIPTS = 200_000
 
 
 class XeniumReader(SpatialDatasetReader):
@@ -89,29 +95,69 @@ class XeniumReader(SpatialDatasetReader):
         genes: Optional[list[str]] = None,
         fraction: float = 1.0,
     ) -> dict:
-        df = self._read_parquet(
-            "transcripts.parquet",
-            columns=["x_location", "y_location", "feature_name", "qv"],
-        )
-        if df is None:
+        """Transcript detections in pixel space, bbox- and gene-filtered.
+
+        Queried through DuckDB so the bbox and gene predicates push down into the
+        parquet scan. Only matching row groups are read; a zoomed-in viewport on a
+        multi-GB transcripts.parquet touches a small fraction of the file.
+
+        ``total`` is the count *after* filtering but *before* sampling, because
+        the frontend uses it to report "showing N of M" and to calibrate density.
+        """
+        path = self.path / "transcripts.parquet"
+        if not path.exists():
             return {"transcripts": [], "total": 0}
-        if bbox:
-            xmin, ymin, xmax, ymax = self._bbox_to_native(bbox)
-            if None not in (xmin, ymin, xmax, ymax):
-                df = df[
-                    (df["x_location"] >= xmin) & (df["x_location"] <= xmax) &
-                    (df["y_location"] >= ymin) & (df["y_location"] <= ymax)
-                ]
-        if genes:
-            df = df[df["feature_name"].isin(genes)]
-        total = len(df)
-        fraction = max(0.0001, min(1.0, fraction))
-        sample_n = min(round(fraction * total), 200_000)
-        df = (df.sample(n=sample_n, random_state=42).copy()
-              if sample_n < total else df.copy())
-        df["x_location"] = df["x_location"] / self.pixel_size
-        df["y_location"] = df["y_location"] / self.pixel_size
-        return {"transcripts": self._to_records(df), "total": total}
+
+        cols = duck.columns(path)
+        if not {"x_location", "y_location"} <= cols:
+            return {"transcripts": [], "total": 0}
+        # qv is absent from some exports — select only what the file actually has.
+        select_cols = [c for c in ("x_location", "y_location", "feature_name", "qv")
+                       if c in cols]
+        select = ", ".join(f'"{c}"' for c in select_cols)
+
+        conditions: list[str] = []
+        params: list = []
+
+        bbox_sql, bbox_params = duck.bbox_predicate(
+            "x_location", "y_location",
+            self._bbox_to_native(bbox) if bbox else None,
+        )
+        if bbox_sql:
+            conditions.append(bbox_sql)
+            params.extend(bbox_params)
+
+        if genes and "feature_name" in cols:
+            gene_sql, gene_params = duck.in_predicate("feature_name", genes)
+            conditions.append(gene_sql)
+            params.extend(gene_params)
+
+        where = duck.where_clause(conditions)
+        src = duck.scan(path)
+
+        with duck.connect() as conn:
+            total = conn.execute(
+                f"SELECT COUNT(*) FROM {src} {where}", params
+            ).fetchone()[0]
+            total = int(total or 0)
+            if total == 0:
+                return {"transcripts": [], "total": 0}
+
+            fraction = max(0.0001, min(1.0, fraction))
+            sample_n = min(round(fraction * total), _MAX_TRANSCRIPTS)
+            if sample_n <= 0:
+                return {"transcripts": [], "total": total}
+
+            sample = duck.reservoir_sample(sample_n) if sample_n < total else ""
+            df = conn.execute(
+                f"SELECT * FROM (SELECT {select} FROM {src} {where}) {sample}",
+                params,
+            ).df()
+
+        ps = self.pixel_size
+        df["x_location"] = df["x_location"] / ps
+        df["y_location"] = df["y_location"] / ps
+        return {"transcripts": duck.to_records(df), "total": total}
 
     # ── Cells ─────────────────────────────────────────────────────────────────
 
@@ -157,33 +203,72 @@ class XeniumReader(SpatialDatasetReader):
     # ── Cell boundaries ───────────────────────────────────────────────────────
 
     def cell_boundaries(self, bbox: Optional[tuple] = None, fraction: float = 1.0) -> dict:
-        df = self._read_parquet("cell_boundaries.parquet")
-        if df is None:
+        """Cell polygon vertices in pixel space for cells visible in the bbox.
+
+        Selection is per *cell*, not per vertex. A cell qualifies if any one of its
+        vertices falls in the bbox, and then **all** of its vertices are returned.
+        That matters at the viewport edge: filtering vertices directly (the previous
+        behaviour) clipped boundary cells into partial polygons that rendered as
+        torn shapes. Sampling likewise draws whole cells, so a sampled cell is never
+        missing part of its outline.
+
+        ``total`` is the number of distinct cells touching the bbox before sampling —
+        ``useCellBoundaries`` divides its ~5K target by this to pick the next fraction,
+        so it has to stay a pre-sample count.
+        """
+        path = self.path / "cell_boundaries.parquet"
+        if not path.exists():
             return {"boundaries": [], "total": 0}
-        x_col = next((c for c in df.columns if "vertex_x" in c), None)
-        y_col = next((c for c in df.columns if "vertex_y" in c), None)
-        if bbox and x_col and y_col:
-            xmin, ymin, xmax, ymax = self._bbox_to_native(bbox)
-            if None not in (xmin, ymin, xmax, ymax):
-                df = df[
-                    (df[x_col] >= xmin) & (df[x_col] <= xmax) &
-                    (df[y_col] >= ymin) & (df[y_col] <= ymax)
-                ]
-        total_cells = 0
-        if "cell_id" in df.columns:
-            unique_ids = df["cell_id"].drop_duplicates()
-            total_cells = len(unique_ids)
+
+        cols = duck.columns(path)
+        x_col = next((c for c in cols if "vertex_x" in c), None)
+        y_col = next((c for c in cols if "vertex_y" in c), None)
+        if not x_col or not y_col or "cell_id" not in cols:
+            return {"boundaries": [], "total": 0}
+
+        bbox_sql, bbox_params = duck.bbox_predicate(
+            x_col, y_col, self._bbox_to_native(bbox) if bbox else None
+        )
+        where = duck.where_clause([bbox_sql])
+        src = duck.scan(path)
+        select = f'"cell_id", "{x_col}", "{y_col}"'
+
+        with duck.connect() as conn:
+            total = conn.execute(
+                f"SELECT COUNT(DISTINCT cell_id) FROM {src} {where}", bbox_params
+            ).fetchone()[0]
+            total = int(total or 0)
+            if total == 0:
+                return {"boundaries": [], "total": 0}
+
             fraction = max(0.0001, min(1.0, fraction))
-            sample_n = round(fraction * total_cells)
-            if sample_n < total_cells:
-                keep = unique_ids.sample(n=sample_n, random_state=42)
-                df = df[df["cell_id"].isin(keep)]
-        df = df.copy()
-        if x_col:
-            df[x_col] = df[x_col] / self.pixel_size
-        if y_col:
-            df[y_col] = df[y_col] / self.pixel_size
-        return {"boundaries": self._to_records(df), "total": total_cells}
+            sample_n = round(fraction * total)
+            if sample_n <= 0:
+                return {"boundaries": [], "total": total}
+
+            # Resolve the visible cell ids first, sample among them, then fetch
+            # every vertex belonging to a surviving id. The second scan re-reads
+            # the parquet, but both scans are predicate-pushed and together still
+            # read far less than materializing the whole file.
+            sample = duck.reservoir_sample(sample_n) if sample_n < total else ""
+            df = conn.execute(
+                f"""
+                WITH visible AS (
+                    SELECT DISTINCT cell_id FROM {src} {where}
+                ),
+                keep AS (
+                    SELECT cell_id FROM visible {sample}
+                )
+                SELECT {select} FROM {src}
+                WHERE cell_id IN (SELECT cell_id FROM keep)
+                """,
+                bbox_params,
+            ).df()
+
+        ps = self.pixel_size
+        df[x_col] = df[x_col] / ps
+        df[y_col] = df[y_col] / ps
+        return {"boundaries": duck.to_records(df), "total": total}
 
     # ── Expression ────────────────────────────────────────────────────────────
 
