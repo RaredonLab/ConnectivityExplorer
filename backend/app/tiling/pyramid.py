@@ -321,8 +321,21 @@ def _pyramid_root(dataset_path: Path, image_name: str) -> Path:
 
 
 def _find_source(dataset_path: Path, image_name: str) -> Optional[Path]:
+    """Resolve an image stem from /spatial/{dataset}/images back to a file path.
+
+    Searches the dataset root first, then one level of subdirectories, so
+    multi-channel sets such as Xenium's ``morphology_focus/`` resolve. The
+    root-first order matches ``spatial.list_images`` so a stem that exists in
+    both places always resolves to the same file the picker listed.
+    """
     for ext in (".ome.tif", ".ome.tiff", ".tif", ".tiff"):
         candidate = dataset_path / f"{image_name}{ext}"
         if candidate.exists():
             return candidate
+    for ext in (".ome.tif", ".ome.tiff", ".tif", ".tiff"):
+        for subdir in sorted(dataset_path.iterdir()):
+            if subdir.is_dir() and not subdir.name.startswith("."):
+                candidate = subdir / f"{image_name}{ext}"
+                if candidate.exists():
+                    return candidate
     return None
