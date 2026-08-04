@@ -50,22 +50,43 @@ The backend uses an abstract reader pattern. All platform readers inherit from
 `SpatialDatasetReader` (base_reader.py) and implement the same interface.
 `ReaderFactory` auto-detects the platform from directory contents.
 
-**Detection order:**
+**Detection order** (first match wins — see `reader_factory.py::_DETECTORS`):
 | Platform | Sentinel file |
 |---|---|
 | Xenium (10x Genomics) | `experiment.xenium` |
+| Visium HD (10x Genomics) | a `square_???um/` subdirectory |
 | MERSCOPE (Vizgen) | `cell_by_gene.csv` or `cell_metadata.csv` |
 | CosMx (Nanostring) | `*_tx_file.csv` |
 
 **Coordinate contract**: Every reader converts native coordinates to image pixel space
 before returning data. The frontend always receives pixel coordinates.
 
+**Capability flags**: `capabilities()` on the base class returns
+`{has_morphology, has_transcripts, has_boundaries, unit_label}`. The frontend reads these
+from `/spatial/{dataset}/info` and hides layers a platform cannot serve. Readers override
+it to declare what they lack — this is how spot-based platforms suppress the transcript
+and boundary layers rather than returning empty arrays for them.
+
 **Implementation status:**
-- Xenium: fully implemented
+- Xenium: fully implemented; the only reader with supplemental `cell-metadata/` support
+- Visium HD: bins as points (`cells`, `cells_schema`, `cell_detail` from
+  `tissue_positions.parquet`); declares `has_transcripts: False`, `has_boundaries: False`,
+  `unit_label: "bin"`. `gene_list`, `cell_expression`, and gene-set color-values are stubs
+  pending `filtered_feature_bc_matrix.h5` parsing.
 - MERSCOPE: cells, transcripts, genes, color-values (metadata + gene-set) implemented;
-  cell boundaries stub (MERSCOPE uses HDF5 boundary format, not yet parsed)
+  `cell_boundaries()` returns empty and `has_boundaries: False` (HDF5 polygon format
+  not yet parsed)
 - CosMx: cells, transcripts, genes, metadata color-values implemented;
-  gene-set color-values stub (requires transcript aggregation per cell)
+  gene-set color-values stub (requires transcript aggregation per cell);
+  `has_boundaries: False` (boundaries are per-FOV label TIFFs)
+
+**Interface caveat**: `VisiumHDReader.transcripts()` and `.cell_boundaries()` still carry
+the pre-refactor signature (`limit=` instead of `fraction=`, returning `[]` instead of the
+`{"transcripts"/"boundaries": [...], "total": N}` dict every other reader returns). The
+router calls them with `fraction=`, so a direct call would raise `TypeError`. It is
+unreachable today only because the capability flags stop the frontend from asking. Fix the
+signatures before relying on those flags. Note also that `base_reader.py`'s docstrings
+still say `cell_boundaries -> list[dict]` while every implementation returns the dict form.
 
 ---
 
@@ -87,9 +108,10 @@ backend/
       base_reader.py         Abstract base class — SpatialDatasetReader interface
       reader_factory.py      ReaderFactory: auto-detect platform, instantiate reader
       xenium_reader.py       Xenium implementation (inherits SpatialDatasetReader)
+      visium_hd_reader.py    Visium HD implementation — bins as points; partial (see status above)
       merscope_reader.py     MERSCOPE implementation (inherits SpatialDatasetReader)
       cosmx_reader.py        CosMx implementation (inherits SpatialDatasetReader)
-      edge_reader.py         reads edges.parquet; query_grouped(), lrm_catalogue(), edge_color_values(), edge_detail()
+      edge_reader.py         reads edges.parquet; query_grouped(), query_scores(), lrm_catalogue(), edge_color_values(), edge_detail()
       layer_reader.py        generic parquet reader
     tiling/
       pyramid.py             OME-TIFF → DZI; pyvips streaming primary, tifffile+Pillow fallback
@@ -98,15 +120,18 @@ backend/
 
 frontend/
   src/
+    App.jsx                  Root component; React ErrorBoundary + top-level layout.
+                             NOTE: sibling of components/, not inside it.
     store.js                 Zustand store — ALL shared state lives here
     components/
-      App.jsx                Root component; wraps everything in a React ErrorBoundary
       Viewer.jsx             Split-screen wrapper (Viewer) + per-panel logic (ViewerPanel)
       LayerPanel.jsx         Right-side panel: toggles, opacity, color-by, legends,
                              dataset/image picker, transcript species filter
       CellInfoPanel.jsx      Floating panel on cell click; shows color-by value highlight
       EdgeInfoPanel.jsx      Floating panel on edge/autocrine click
-      AnnotationToolbar.jsx  Region drawing + measurement tools; ⊞ Split / □ Single toggle; ⇔ Match zoom
+      AnnotationToolbar.jsx  Region drawing + measurement tools; ⊞ Split / □ Single toggle;
+                             ⇔ Match zoom; per-panel rotation (⟲ / angle / ⟳)
+      RenderingStatus.jsx    Per-panel loading badge, driven by the store's loadingKeys set
     hooks/
       useTranscripts.js      Viewport-bounded transcript fetch (bbox always sent; skip at low zoom)
       useCellBoundaries.js   Viewport-bounded cell boundary fetch (skip when fracW >= 0.5)
@@ -121,14 +146,27 @@ frontend/
   Dockerfile                 Multi-stage: node build → nginx serve
 
 docker-compose.yml           Repo root; mounts DATA_PATH (or sample_data/) as /data:ro
+docker-compose.prod.yml      Production stack used by the cloud deployment
 docker/docker-compose.yml    Legacy path (kept for compatibility)
-sample_data/                 GITIGNORED — default data mount for local dev/demo
-r/
-  export_NICHESObject_for_viewer.R  draft R function for NICHESv2 → edges.parquet export
+Caddyfile                    Reverse proxy + TLS for the cloud deployment; optional basicauth
+deploy.sh                    One-shot droplet bootstrap (see docs/cloud-deploy.md)
+upload-data.sh               rsync datasets to a deployed server
+sample_data/                 Partially gitignored — default data mount for local dev/demo.
+                             mouse_ileum_tiny is tracked; larger datasets are ignored.
+r/                           Personal analysis scripts with hardcoded paths — a pipeline,
+                             not reusable functions. Run in this order:
+  ExportMetaDataforTissuePlex.R      dump a Seurat @meta.data to CSV
+  run_NICHESv2_Xenium_PPLR.R         run NICHESv2 (rad=25, method="product") → .rds
+  export_NICHES_for_TissuePlex_PPLR.R  call export_to_TissuePlex(), validate the parquet
 docs/
   data_format.md             edges.parquet column spec for NICHESv2 R export
-  setup.md                   Docker deployment guide
+  setup.md                   Docker deployment guide (lab-facing)
+  cloud-deploy.md            DigitalOcean deployment runbook (~$106–116/mo)
   public_datasets.md         Links to public Xenium datasets used for development
+  index.html, demo.gif       Landing page + README demo animation
+OBS/                         Archived, superseded planning docs. Provenance only —
+                             NOT a specification. See OBS/README.md.
+NICHESv2_package_design.md   Design doc for the separate NICHESv2 R package (not this repo)
 ```
 
 ---
@@ -281,11 +319,26 @@ All shared state lives in a single Zustand store. Key sections:
 - **LRM filter**: `hiddenLrms` (Set of "ligand|receptor" strings), `lrmCatalogue`
 - **Selection**: `selectedCell`, `selectedEdge`
 - **Annotations**: `regions`, `measurements`, `activeRegion`, `annotationMode`
+- **Sampling**: `transcriptFraction` (default 0.1) and `cellBoundaryFraction`
+  (`null` = auto) control how much of the viewport each hook requests;
+  `transcriptStats` / `cellBoundaryStats` hold live `{shown, total}` counts that the
+  LayerPanel displays. Both stats are written by panel 0 only.
+- **Color overrides**: `categoryColorOverrides` (keyed `${field}::${category}`) and
+  `transcriptColorOverrides` (keyed by gene name) hold user-picked swatch colors.
+  Both reset on dataset change. `merge*` actions exist for bulk CSV import.
+- **Loading**: `loadingKeys` — a Set of in-flight keys, one per panel
+  (`panel-0`, `panel-1`). `RenderingStatus.jsx` shows a badge whenever it is non-empty.
+  Each ViewerPanel ORs together every hook's `loading` flag into its own key.
 - **Split-screen**: `panelCount` (1 or 2), `viewports` (array of two viewport objects,
   one per panel — `{xmin,ymin,xmax,ymax}` in image pixels), `pendingZoomMatch`
   (`null` or `{ fromPanel }` — consumed by the target panel to match zoom while
   keeping its own center). `requestZoomMatch(fromPanel)` / `clearZoomMatch()` are the
   corresponding actions.
+- **Rotation**: `panelRotations` — `[deg, deg]`, one per panel, normalized to 0–359 by
+  `setPanelRotation`. See the Rotation section below.
+- **`viewportActual`**: the *un-expanded* OSD bounds per panel. Distinct from `viewports`,
+  which is padded when a panel is rotated. Only ⇔ Match zoom reads it, so that matching
+  uses the true visible width rather than the rotation-padded fetch bbox.
 
 ---
 
@@ -340,7 +393,10 @@ Layers rendered in order (bottom to top):
 5. `edges-directed` — LineLayer, directed edges (LRM-filtered, colored)
 6. `edges-arrowheads` — SolidPolygonLayer, filled arrowhead triangles (full or harpoon style)
 7. `edges-autocrine` — ScatterplotLayer (stroked only), autocrine rings
-8. Annotation layers (region fills, outlines, measurement lines)
+8. Annotation layers (region fills, outlines, active region + vertices, measurement
+   lines, endpoints, first-point marker)
+
+Every layer receives `modelMatrix: rotModelMatrix` so rotation applies uniformly.
 
 **Tissue graph vs Edge data**: Tissue graph = binary structural layer (which cells are connected
 at all, regardless of LRM). Edge data = quantitative/categorical overlay on top. Analogous to
@@ -377,7 +433,8 @@ Results set `selectedCell` or `selectedEdge` in the store.
 - OSD viewer instance (`viewerRef`)
 - deck.gl ref (`deckRef`)
 - deck.gl view state (`deckViewState`)
-- Per-panel viewport in store (`viewports[panelIndex]`)
+- Per-panel viewport in store (`viewports[panelIndex]`, `viewportActual[panelIndex]`)
+- Rotation angle (`panelRotations[panelIndex]`) and the derived `rotModelMatrix`
 - `osdOpenCount` — local counter incremented on each OSD `open` event; used as dep
   for the morphology opacity effect to ensure it fires regardless of whether
   `imageSize.w` changed (fixes the bug where morphology stayed visible after
@@ -398,6 +455,67 @@ Results set `selectedCell` or `selectedEdge` in the store.
 - `setCellColorRange`, `setEdgeColorRange`, `setEdgeColorClamp` updates
 - EdgeInfoPanel rendering
 
+---
+
+## Per-Panel Rotation (issue #31)
+
+Each panel can be rotated independently, via ⟲ / angle input / ⟳ in `AnnotationToolbar`.
+`setPanelRotation(panelIndex, angle)` normalizes to 0–359.
+
+Rotation has to be applied in **two** places that must stay consistent:
+
+1. **OSD tiles** — `viewer.viewport.setRotation(panelRotation)` rotates the morphology
+   image.
+2. **deck.gl layers** — a column-major 4×4 `modelMatrix` from `makeRotMatrix(angle, cx, cy)`,
+   pivoting around the *current viewport center*, passed to every layer.
+
+Because the pivot is the viewport center, the matrix must be recomputed whenever the
+viewport moves — which is why `syncDeckFromOSD` rebuilds it on every viewport-change event
+rather than only when the angle changes.
+
+Three consequences worth knowing before touching this:
+
+- **Fetch bboxes are padded.** A rotated viewport rectangle covers more of the image than
+  its axis-aligned bounds suggest, so `rotatedBbox()` grows the box outward (no-op at 0°
+  and 180°). That padded box goes to `viewports`; the true bounds go to `viewportActual`.
+  ⇔ Match zoom reads `viewportActual` so padding never inflates the matched zoom.
+- **Picking and annotation clicks must inverse-rotate.** `screenToData()` projects screen →
+  rotated view space, then calls `inverseRotate()` to get back to original image
+  coordinates. Skip that and annotations land in the wrong place at any non-zero angle.
+- **Measurement labels forward-rotate.** `forwardRotate()` maps an image-space midpoint
+  into rotated view space before projecting it to a screen position for the HTML label.
+
+The rotation effect depends on `[panelRotation, osdOpenCount]` so it re-applies after an
+OSD reinitialization, not just on an angle change.
+
+---
+
+## Morphology Image Discovery
+
+`GET /spatial/{dataset}/images` returns bare filename **stems** (no extension, no directory
+prefix) for every `.ome.tiff` / `.ome.tif` / `.tiff` / `.tif` in the dataset root **and one
+level of subdirectories**. This is what makes Xenium's multi-channel `morphology_focus/`
+set selectable alongside the top-level `morphology.ome.tif`:
+
+```
+dataset_dir/
+  morphology.ome.tif              → "morphology"
+  morphology_focus/
+    morphology_focus_0000.ome.tif → "morphology_focus_0000"
+    morphology_focus_0001.ome.tif → "morphology_focus_0001"
+```
+
+`pyramid.py::_find_source()` resolves a stem back to a path by searching the **same two
+locations in the same order** — root first, then subdirectories. These two functions are a
+matched pair: if you change the search order or depth in one, change it in the other, or
+the picker will list images the tile builder cannot open.
+
+Hidden directories are skipped so `.dzi_cache` is never scanned. Stems are de-duplicated,
+and root-level files are added first, so a root file always wins a name collision with a
+subdirectory file. Names sort morphology-first, then alphabetically.
+
+---
+
 **⇔ Match zoom flow:**
 `requestZoomMatch(fromPanel)` → both panels' effects fire → source panel early-returns
 (`fromPanel === panelIndex`) → target panel reads `viewports[fromPanel]` via
@@ -409,20 +527,30 @@ center, calls `viewport.fitBounds(newBounds, false)` (animated), then `clearZoom
 
 ## Viewport-Bounded Data Fetching
 
-All data hooks (transcripts, cell boundaries, edges) are debounced and skip fetches
-that would be wasted at the current zoom level:
+All data hooks (transcripts, cell boundaries, edges) are debounced (400 ms) and abort
+in-flight requests when superseded. Rendering is no longer gated on a zoom threshold —
+the old `fracW >= 0.7` / `fracW >= 0.5` skip conditions were removed so layers draw at
+every zoom level including whole-tissue ("bird's-eye view", PR #28). Volume is instead
+controlled by user-adjustable sampling fractions:
 
-| Hook | Skip condition | Bbox filter | Limit |
+| Hook | Volume control | Bbox filter | Backend cap |
 |---|---|---|---|
-| `useTranscripts` | `fracW >= 0.7` | Always sent when viewport available | 50K (random sample) |
-| `useCellBoundaries` | `fracW >= 0.5` | Always sent | 20K cells |
-| `useEdges` | no viewport | Always sent | 10K–50K edges (grouped) |
+| `useTranscripts` | `transcriptFraction` (default 0.1) | Always sent | 200K rows |
+| `useCellBoundaries` | `cellBoundaryFraction` (`null` = auto, targets ~5K cells) | Always sent | — |
+| `useEdges` | `edgeDensity` (default 0.1) | Always sent | 500K grouped rows |
 
-`fracW = (xmax - xmin) / imageSize.w` — fraction of image width visible.
+Each hook reports live `{shown, total}` counts into the store so the LayerPanel can show
+what fraction of the data is actually on screen.
 
-**Transcript sampling**: the backend uses `df.sample(n=limit)` (random, not `head`)
-so the 50K returned transcripts are spatially uniform across the viewport rather than
-biased toward whatever region appears first in the parquet row order.
+**Transcript sampling**: the backend uses `df.sample(n=...)` (random, not `head`) so the
+returned transcripts are spatially uniform across the viewport rather than biased toward
+whatever region appears first in the parquet row order. Cell boundaries sample *unique
+cell IDs* before filtering rows, so a sampled cell keeps all of its vertices and never
+renders as a partial polygon.
+
+**Edge sampling** uses DuckDB `USING SAMPLE ... (bernoulli)` on the grouped result, so
+each edge is included independently at probability `density` — spatially uniform, and
+no sampling clause is emitted at all when `density = 1.0`.
 
 **Edge aggregation**: `useEdges` POSTs to `/edges/{dataset}/query-grouped` which returns
 one row per directed edge (GROUP BY edge, ORDER BY RANDOM()). For a 168M-row parquet
@@ -487,8 +615,10 @@ npm install
 npm run dev   # → http://localhost:5173, proxies /api → :8000
 ```
 
-Note: dev server runs on port **5173** (not 3000) to avoid conflicting with Docker,
-which binds port 3000. This is configured in `.claude/launch.json`.
+Note: the dev server runs on port **5173**, set in `frontend/vite.config.js`. It must not
+be 3000 — `docker compose` binds 3000 for the production frontend, so a dev server on 3000
+collides with any running container. `.claude/launch.json` passes `--port 5173` explicitly
+as well, so both entry points agree.
 
 **Docker — demo data (sample_data/):**
 ```bash
@@ -503,6 +633,22 @@ DATA_PATH="/absolute/path/to/datasets" docker compose up --build
 ```
 `DATA_PATH` must be an absolute host path with no colons. Drop any supported platform
 output folder under `DATA_PATH` — TissuePlex auto-detects the platform on first access.
+
+**Cloud deployment:** `docs/cloud-deploy.md` is a complete DigitalOcean runbook
+(~$106–116/month: 16 GB / 4 vCPU droplet + 200 GB block storage). The moving parts are
+`deploy.sh` (droplet bootstrap), `docker-compose.prod.yml` (production stack),
+`Caddyfile` (reverse proxy + automatic TLS), and `upload-data.sh` (rsync datasets up).
+Tuning knobs live in a `.env.prod` file that is gitignored and must be created by hand;
+`DUCKDB_MEMORY_LIMIT` is the one to reach for if the backend OOMs on large edge files.
+
+**Access control is opt-in and off by default.** The Caddyfile supports `basicauth`, but
+unless it is enabled anyone with the URL can view the data. There is no application-level
+auth, no user accounts, and no per-dataset permissions.
+
+**No tests, no CI, no linter.** There is no test suite, no `.github/workflows`, and no
+ESLint or Python lint configuration in this repo. Changes are verified by running the app.
+Be correspondingly careful with refactors that touch the reader interface or the
+OSD ↔ deck.gl coordinate bridge, since nothing will catch a regression automatically.
 
 ---
 
@@ -544,27 +690,75 @@ output folder under `DATA_PATH` — TissuePlex auto-detects the platform on firs
 - **`Math.min/max` spread on large arrays** (fixed in `useEdgeColors.js`): spreading
   100K+ element arrays causes `RangeError: Maximum call stack size exceeded`. Use a
   `for` loop to find min/max instead of `Math.min(...arr)`.
+- **`list_images` and `_find_source` are a matched pair.** They must search the same
+  locations in the same order (root, then one subdirectory level). Changing the depth or
+  order in one without the other makes the picker list images the tile builder can't open.
+- **Edge color clamp has two different defaults, by design.** `Viewer.jsx` auto-sets
+  `edgeColorClamp.high` from the p95 of `visible_score_sum` so the initial view isn't
+  washed out by outliers. But `useEdgeColors` computes its own fallback `hi` as `max`, not
+  p95, so that "reset range" lands on a value matching the legend endpoints. They disagree
+  intentionally — don't "fix" one in isolation.
+- **`edges.py` validates path traversal; the other routers don't.** `edges.py::_reader`
+  resolves `edge_file` and rejects anything escaping the dataset directory.
+  `spatial.py::_reader`, `tiles.py`, and `layers.py` do a bare `DATA_ROOT / dataset` with
+  no equivalent check. Harmless for a local single-user tool; worth closing before any
+  deployment where the URL is reachable by someone untrusted.
+- `zarr==2.18.2` is still pinned in requirements.txt although the readers use parquet and
+  HDF5, not zarr. Likely stale; verify before removing.
 
 ---
 
 ## What's Not Built Yet
 
-1. **R export function** — `export_for_TissuePlex()` is implemented in the NICHESv2 R
-   package (separate repo). The draft in `r/export_NICHESObject_for_viewer.R` is
-   superseded. See `docs/data_format.md` for the column spec.
+1. **Spatial reads have no streaming path** — this is the biggest remaining performance
+   gap. `XeniumReader._read_parquet()` does an uncached `pq.read_table(...).to_pandas()`
+   and then filters by bbox *in pandas*, so every viewport change re-reads the entire
+   `transcripts.parquet` / `cell_boundaries.parquet` before discarding everything outside
+   the box. On a full Xenium run that read dominates the cost of a pan. The edge path
+   already solved exactly this with DuckDB predicate pushdown — porting `transcripts()`
+   and `cell_boundaries()` to the `EdgeReader` pattern is the highest-leverage change
+   available, and the pattern to copy is already in the repo. (`_cells_full()` and
+   `_load_supplemental_metadata()` *are* cached, but those are the small tables.)
 
-2. **Cell expression bar chart** — click panel currently shows cell metadata but not a sorted
-   gene expression readout. The `/spatial/{dataset}/expression/{cell_id}` endpoint exists
-   but the UI component is not built.
+2. **Supplemental metadata is not shown in the cell info panel** — `CellInfoPanel.jsx`
+   renders a hardcoded field list (`cell_id`, x, y, `transcript_counts`, `total_counts`,
+   `cell_area`, `nucleus_area`) plus expression. Supplemental columns merged by
+   `_cells_full()` reach the color-by dropdown but only appear in the panel if one happens
+   to be the active color-by field. Compounding this, **no sample dataset has a
+   `cell-metadata/` folder**, so the feature cannot be exercised locally as shipped.
 
-3. **MERSCOPE cell boundaries** — MERSCOPE stores boundaries as HDF5 polygon data;
-   `MerscopeReader.cell_boundaries()` is a stub returning `[]`.
+3. **Cell expression bar chart** — click panel shows cell metadata but not a sorted gene
+   expression readout. `/spatial/{dataset}/expression/{cell_id}` exists; the UI does not.
 
-4. **CosMx gene-set coloring** — requires per-cell expression aggregation from the
-   transcript file; `CosMxReader._color_values_gene_set()` is a stub returning empty.
+4. **Reader interface drift** — `VisiumHDReader.transcripts()` / `.cell_boundaries()` use
+   the old `limit=` signature and return `[]`. See the caveat under Platform Support.
 
-5. **Performance at scale** — edge rendering is now fast (query-grouped returns ~300K
-   edges as 300K rows instead of 168M rows; colors computed client-side). Remaining
-   bottlenecks: LOD for arrowheads at low zoom, transcript rendering at very high density.
+5. **MERSCOPE cell boundaries** — HDF5 polygon data; `MerscopeReader.cell_boundaries()`
+   returns empty and the reader declares `has_boundaries: False`.
 
-6. **Authentication** — no auth. Fine for local/lab use, needs work for any public deployment.
+6. **CosMx gene-set coloring and boundaries** — gene-set coloring requires per-cell
+   expression aggregation from the transcript file; boundaries are per-FOV label TIFFs.
+   Both are stubs.
+
+7. **Visium HD expression** — `gene_list()`, `cell_expression()`, and gene-set color-values
+   need `filtered_feature_bc_matrix.h5` parsing.
+
+8. **Rendering performance** — edge rendering is fast now (query-grouped returns ~300K
+   rows instead of 168M; colors computed client-side). Remaining: LOD for arrowheads at
+   low zoom, transcript rendering at very high density.
+
+9. **Authentication** — no application-level auth. Caddy `basicauth` is available for
+   cloud deployments (`docs/cloud-deploy.md`) but is **opt-in and off by default**. There
+   are no user accounts and no per-dataset permissions.
+
+### Open GitHub issues
+
+- **#45 — Select cells/edges by metadata.** Let the user restrict the view to a subset
+  (a sample, or 2–3 cell types) rather than all data at once.
+- **#35 — Force-categorical toggle for numeric metadata columns.** Integer-coded
+  categoricals (Seurat cluster IDs, `*_snn_res.*`, phenotype codes) currently route to a
+  continuous viridis gradient. Partially mitigated already: `_color_values_meta()` treats
+  an integer column with ≤ 30 unique values as categorical, and `edge_color_values()` does
+  the same. Above that threshold users still fall back to renaming values to strings.
+  The ask is an explicit per-column "treat as categorical" toggle in the color panel,
+  with numeric sort order preserved in the legend.
