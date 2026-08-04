@@ -3,6 +3,14 @@
 xenium_human_breast_2fov/
 merscope-*/
 cosmx-*/
+visium-*/
+
+# seqFISH / Spatial Genomics GenePS datasets.
+# The scverse test dataset (s3.embl.de/spatialdata/raw_data/seqfish-2-test-dataset.zip)
+# is public for CI by written permission from Spatial Genomics, not under an open
+# licence — usable for local development, but must not be redistributed from this repo.
+seqfish*/
+seqfish-*/
 
 # ── Xenium files present in the repo but not needed by TissuePlex ────────────
 # Xenium Explorer analysis outputs
