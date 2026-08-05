@@ -8,7 +8,7 @@ An interactive spatial transcriptomics viewer for exploring cell-cell communicat
 
 ## What it does
 
-Spatial transcriptomics platforms (Xenium, Visium HD, MERSCOPE, CosMx) produce high-resolution images with hundreds of genes measured per cell. NICHESv2 infers which cells are communicating and through which ligand-receptor mechanisms (LRMs). TissuePlex bridges those two outputs: it overlays the NICHESv2 communication graph on the tissue image and lets you explore it interactively.
+Spatial transcriptomics platforms (Xenium, seqFISH, Visium HD, MERSCOPE, CosMx) produce high-resolution images with hundreds of genes measured per cell. NICHESv2 infers which cells are communicating and through which ligand-receptor mechanisms (LRMs). TissuePlex bridges those two outputs: it overlays the NICHESv2 communication graph on the tissue image and lets you explore it interactively.
 
 **Key capabilities:**
 
@@ -19,6 +19,7 @@ Spatial transcriptomics platforms (Xenium, Visium HD, MERSCOPE, CosMx) produce h
 - **Multiple edge sets per dataset** — drop several `.parquet` files into an `edges/` folder and flip between scoring approaches on the same tissue without duplicating the image or cell data
 - **Pan and zoom on high-resolution morphology images** — OME-TIFF tile pyramid with smooth zoom from whole-tissue to single-cell scale
 - **Multi-channel morphology** — Xenium `morphology_focus/` channels are selectable alongside the top-level morphology image
+- **Cross-platform metadata** — the `cell-metadata/` convention works the same way on every platform that supports it, so annotation workflows transfer between Xenium and seqFISH unchanged
 - **Split-screen comparison** — two independently navigable panels sharing one set of layer controls, with a match-zoom button
 - **Per-panel rotation** — rotate either panel to any angle to align tissue orientation
 - **Transcript dot overlay** — per-gene colored dots, filterable by gene species, with hover tooltips
@@ -34,11 +35,14 @@ Spatial transcriptomics platforms (Xenium, Visium HD, MERSCOPE, CosMx) produce h
 | Platform | Vendor | Morphology | Transcripts | Cell segments | Edges |
 |---|---|:---:|:---:|:---:|:---:|
 | **Xenium** | 10x Genomics | ✓ | ✓ | ✓ | ✓ |
+| **seqFISH** | Spatial Genomics | ✓ | ✓ | ✓ | ✓ |
 | **Visium HD** | 10x Genomics | ✓ | — | — | ✓ |
 | **MERSCOPE** | Vizgen | — | ✓ | — | ✓ |
 | **CosMx** | Nanostring | — | ✓ | — | ✓ |
 
-Xenium is the most complete implementation. The other readers cover cells, transcripts, and metadata coloring; boundary parsing is platform-specific and not yet implemented for them (MERSCOPE stores polygons in HDF5, CosMx in per-FOV label TIFFs). Visium HD renders bins as points rather than polygons and has no per-molecule transcript coordinates. Each reader declares what it supports via a capability flag, and the UI hides layers the platform cannot serve.
+Xenium and seqFISH are the complete implementations. seqFISH means the commercial **Spatial Genomics GenePS** output, not the academic seqFISH/seqFISH+ method, which has no standard file layout; the current v2 layout is fully supported, and legacy v1 reads cells and transcripts but not boundaries.
+
+The other readers cover cells, transcripts, and metadata coloring; boundary parsing is platform-specific and not yet implemented for them (MERSCOPE stores polygons in HDF5, CosMx in per-FOV label TIFFs). Visium HD renders bins as points rather than polygons and has no per-molecule transcript coordinates. Each reader declares what it supports via a capability flag, and the UI hides layers the platform cannot serve.
 
 The edge connectivity layer (NICHESv2 output) works with any platform — it is platform-agnostic as long as cell barcodes match.
 
@@ -80,17 +84,25 @@ DATA_PATH=/absolute/path/to/your/datasets docker compose up --build
       raw_minimum.parquet
       normalized_product.parquet
 
-  visium_hd_run_B/
+  seqfish_run_B/            ← Spatial Genomics GenePS; one ROI per folder
+    Roi1_CellCoordinates.csv    ← seqFISH sentinel
+    Roi1_CellxGene.csv
+    Roi1_TranscriptList.csv
+    Roi1_Boundaries.geojson
+    Roi1_DAPI.tiff
+    edges.parquet
+
+  visium_hd_run_C/
     square_008um/           ← Visium HD sentinel
     edges.parquet
 
-  merscope_run_C/
+  merscope_run_D/
     cell_by_gene.csv        ← MERSCOPE sentinel
     cell_metadata.csv
     detected_transcripts.csv
     edges.parquet
 
-  cosmx_run_D/
+  cosmx_run_E/
     my_experiment_tx_file.csv   ← CosMx sentinel
     edges.parquet
 ```

@@ -9,7 +9,7 @@ of the project so any Claude instance can contribute immediately.
 ## What This Is
 
 A web-based spatial transcriptomics viewer supporting multiple platforms (Xenium,
-MERSCOPE, CosMx) with connectivity layers produced by the lab's NICHESv2 R pipeline.
+seqFISH, Visium HD, MERSCOPE, CosMx) with connectivity layers produced by the lab's NICHESv2 R pipeline.
 Built because Xenium Explorer does not support cell-cell ligand-receptor mechanism
 (LRM) visualization, and extended to be platform-agnostic.
 
@@ -57,6 +57,7 @@ The backend uses an abstract reader pattern. All platform readers inherit from
 | Visium HD (10x Genomics) | a `square_???um/` subdirectory |
 | MERSCOPE (Vizgen) | `cell_by_gene.csv` or `cell_metadata.csv` |
 | CosMx (Nanostring) | `*_tx_file.csv` |
+| seqFISH (Spatial Genomics) | `*_CellCoordinates*.csv` — a glob, so registered **last** |
 
 **Coordinate contract**: Every reader converts native coordinates to image pixel space
 before returning data. The frontend always receives pixel coordinates.
@@ -79,6 +80,12 @@ and boundary layers rather than returning empty arrays for them.
 - CosMx: cells, transcripts, genes, metadata color-values implemented;
   gene-set color-values stub (requires transcript aggregation per cell);
   `has_boundaries: False` (boundaries are per-FOV label TIFFs)
+- seqFISH (Spatial Genomics GenePS): fully implemented for the current **v2** layout —
+  cells, transcripts, boundaries, expression, and both color-value modes. Legacy **v1**
+  reads cells and transcripts but declares `has_boundaries: False`, because v1 ships only
+  a label mask and polygonising it was deliberately deferred rather than adding a
+  dependency. See the seqFISH section below — its coordinate handling is unlike any other
+  reader and is the thing to understand before touching it.
 
 **Interface caveat**: `VisiumHDReader.transcripts()` and `.cell_boundaries()` still carry
 the pre-refactor signature (`limit=` instead of `fraction=`, returning `[]` instead of the
@@ -108,6 +115,9 @@ backend/
       base_reader.py         Abstract base class — SpatialDatasetReader interface
       reader_factory.py      ReaderFactory: auto-detect platform, instantiate reader
       xenium_reader.py       Xenium implementation (inherits SpatialDatasetReader)
+      seqfish_reader.py      seqFISH / Spatial Genomics GenePS; v2 full, v1 partial.
+                             Mixed µm/pixel coordinate handling — see its own section.
+      duck.py                Shared DuckDB query helpers used by the spatial readers
       visium_hd_reader.py    Visium HD implementation — bins as points; partial (see status above)
       merscope_reader.py     MERSCOPE implementation (inherits SpatialDatasetReader)
       cosmx_reader.py        CosMx implementation (inherits SpatialDatasetReader)
@@ -117,6 +127,9 @@ backend/
       pyramid.py             OME-TIFF → DZI; pyvips streaming primary, tifffile+Pillow fallback
   requirements.txt           pinned deps; cffi<2.0 required for pyvips 2.2.3 compatibility
   Dockerfile
+  tests/
+    golden_snapshot.py       Reader regression guard — see Development Workflow
+    golden_baseline.json     Recorded baseline (100 probes / 4 datasets)
 
 frontend/
   src/
@@ -152,7 +165,10 @@ Caddyfile                    Reverse proxy + TLS for the cloud deployment; optio
 deploy.sh                    One-shot droplet bootstrap (see docs/cloud-deploy.md)
 upload-data.sh               rsync datasets to a deployed server
 sample_data/                 Partially gitignored — default data mount for local dev/demo.
-                             mouse_ileum_tiny is tracked; larger datasets are ignored.
+                             mouse_ileum_tiny and seqfish_synthetic are tracked; larger
+                             and licence-restricted datasets are ignored.
+  make_edges.py              Synthetic edges.parquet generator
+  make_seqfish.py            Synthetic seqFISH v2 ROI generator (committable fixture)
 r/                           Personal analysis scripts with hardcoded paths — a pipeline,
                              not reusable functions. Run in this order:
   ExportMetaDataforTissuePlex.R      dump a Seurat @meta.data to CSV
@@ -205,7 +221,11 @@ Real data comes from `export_for_TissuePlex()` in the NICHESv2 R package.
 
 User-defined metadata (e.g. from external R analysis) can be loaded without modifying
 the dataset output by placing files in a `cell-metadata/` subdirectory of the dataset.
-Currently implemented in XeniumReader; the pattern should be ported to other readers.
+The loader lives on `SpatialDatasetReader`, so it is available to every platform; a reader
+opts in by calling `_merge_supplemental()` on its cells table (Xenium and seqFISH do).
+All a platform contributes is `_ROOT_CSV_SKIP` / `_ROOT_CSV_SKIP_SUFFIXES` — the list of
+its *own* root CSVs, so the loader never ingests platform output as user metadata. CosMx
+needs the suffix form because it prefixes every file with the experiment name.
 
 ```
 dataset_dir/
@@ -237,9 +257,9 @@ write.csv(my_metadata_df, file.path(dataset_dir, "cell-metadata", "metadata.csv"
 dropdown. Continuous columns get a gradient colormap; string or low-cardinality integer
 columns get discrete colors. The cell-click info panel also shows the supplemental fields.
 
-`XeniumReader._cells_full()` is cached per reader instance (one Docker request lifecycle).
-`_load_supplemental_metadata()` is also cached, so the CSV is only parsed once regardless
-of how many color-by requests arrive.
+`_cells_full()` is cached per reader instance (one Docker request lifecycle).
+`_load_supplemental_metadata()` is also cached on the base class, so the CSV is parsed once
+regardless of how many color-by requests arrive.
 
 ---
 
@@ -560,6 +580,72 @@ pre-computed server-side.
 
 ---
 
+## seqFISH / Spatial Genomics (readers/seqfish_reader.py)
+
+"seqFISH" names two unrelated things. The academic Cai-lab method has no standard output
+layout; **this reader targets the commercial Spatial Genomics GenePS platform**, which
+does. One flat directory, every file prefixed with an ROI name, one ROI per dataset folder
+(several ROIs in one folder logs a warning and uses the first).
+
+```
+seqfish_dataset/
+  Roi1_CellCoordinates.csv    label, area, center_x, center_y
+  Roi1_CellxGene.csv          unnamed first col = label; remaining cols = genes
+  Roi1_TranscriptList.csv     name, x, y, [z]      — no `cell`, no `qv` in v2
+  Roi1_DAPI.tiff              OME-TIFF despite the .tiff extension; often pyramidal
+  Roi1_Segmentation.tiff      integer label mask (unused — v2 uses the GeoJSON)
+  Roi1_Boundaries.geojson     polygons; feature `id` == label
+```
+
+**A single dataset mixes coordinate systems, and this is the thing to get right.**
+Measured on the reference dataset (1000×1000 px DAPI at 0.107161 µm/px = 107.16 µm across):
+
+| Source | Extent | Units |
+|---|---|---|
+| `CellCoordinates.csv` `center_x` | 1.82 → 105.66 | **microns** |
+| `TranscriptList.csv` `x` | 0.00 → 107.05 | **microns** |
+| `Boundaries.geojson` vertices | 0 → 999 | **pixels** |
+
+Cells and transcripts are divided by `pixel_size`; boundaries pass through untouched.
+Applying one transform to everything puts cells and their own outlines in different
+places — which reads as a rendering bug rather than a unit bug. Worse, the convention
+differs across GenePS software versions, so it cannot be hard-coded.
+
+`_units_divisor()` therefore decides **per table**, comparing that table's extent to the
+image width: a ratio near `pixel_size` means microns, near 1.0 means pixels. On the
+reference data the ratios are 0.106 / 0.107 / 0.999 — two orders of magnitude apart. The
+verdict is logged on load, so if a dataset ever misdetects it is visible in the backend
+output rather than silent.
+
+The regression test for this is geometric, not a digest: **every cell centroid must fall
+inside its own polygon.** 62/62 on the reference dataset and 36/36 on the synthetic
+fixture, with zero false positives against a control. Re-run that check after touching
+anything in the coordinate path.
+
+Other things worth knowing:
+
+- `pixel_size` comes from `PhysicalSizeX` in the **DAPI OME-XML** — not a manifest, unlike
+  every other platform. Falls back to 0.107 (the documented GenePS value).
+- `cell_area` is deliberately left in **µm²** to match Xenium, which never converts it, so
+  the "µm²" label in `CellInfoPanel` is true on every platform.
+- Cell identity comes from each GeoJSON feature's `id`, which equals `label`.
+  `spatialdata-io` instead maps polygons to cells *positionally* and has an open issue
+  about the fragility (scverse/spatialdata-io#249); a silent off-by-one there would draw
+  every outline on the wrong cell. We join on `id` and fall back to position only if
+  absent.
+- GeoJSON rings are closed (first vertex repeated); the reader drops the duplicate because
+  deck.gl closes polygons itself and Xenium boundaries do not repeat it.
+- v2 dropped the transcript→cell assignment column and has no `qv`. Nothing needs them
+  today, but expression can only come from `CellxGene.csv`, never from transcripts.
+
+**Test data.** `sample_data/make_seqfish.py` generates a committable synthetic v2 ROI and
+deliberately reproduces the mixed units, so a reader that got them wrong would fail on it.
+The real reference dataset (`seqfish-2-test-dataset.zip`, scverse CI fixture) is public by
+written permission from Spatial Genomics rather than under an open licence — usable
+locally, gitignored, and must not be redistributed from this repo.
+
+---
+
 ## Spatial Query Path (readers/duck.py)
 
 `transcripts()` and `cell_boundaries()` query parquet through DuckDB rather than loading
@@ -691,10 +777,24 @@ Tuning knobs live in a `.env.prod` file that is gitignored and must be created b
 unless it is enabled anyone with the URL can view the data. There is no application-level
 auth, no user accounts, and no per-dataset permissions.
 
-**No tests, no CI, no linter.** There is no test suite, no `.github/workflows`, and no
-ESLint or Python lint configuration in this repo. Changes are verified by running the app.
-Be correspondingly careful with refactors that touch the reader interface or the
-OSD ↔ deck.gl coordinate bridge, since nothing will catch a regression automatically.
+**Regression guard.** `backend/tests/golden_snapshot.py` exercises every reader method
+against all local datasets, digests the results, and diffs them against a recorded
+baseline (100 probes across 4 datasets). Run it after any reader change:
+
+```bash
+cd backend && python3 tests/golden_snapshot.py          # check
+cd backend && python3 tests/golden_snapshot.py --record # adopt intentional changes
+```
+
+Datasets absent from a checkout are skipped, so it works with only the committed fixtures.
+Two determinism rules keep it honest: record-list digests are order-independent (because
+`query_grouped` uses `ORDER BY RANDOM()`), and sampling is seeded (`duck.SAMPLE_SEED`).
+If a probe changes and you cannot explain why, that is the point of the tool.
+
+There is still **no CI and no linter** — no `.github/workflows`, no ESLint or Python lint
+config. The snapshot is a guard, not a test suite: it catches "this changed" but does not
+assert correctness. Be correspondingly careful with the OSD ↔ deck.gl coordinate bridge,
+which it does not cover at all.
 
 ---
 

@@ -43,9 +43,27 @@ def scan(path: Path) -> str:
     return "read_parquet('{}')".format(str(path).replace("'", "''"))
 
 
+def scan_csv(path: Path) -> str:
+    """SQL FROM-clause fragment that reads a CSV file.
+
+    Platforms that ship CSV instead of parquet (seqFISH) still stream through
+    DuckDB rather than pandas. CSV has no column statistics so nothing can be
+    pruned, but the scan is still streamed rather than materialized, which is
+    what keeps peak memory flat on a multi-GB transcript list.
+    """
+    return "read_csv_auto('{}')".format(str(path).replace("'", "''"))
+
+
 def columns(path: Path) -> set[str]:
     """Column names in a parquet file, read from its footer (no data scan)."""
     return set(pq.read_schema(path).names)
+
+
+def csv_columns(path: Path) -> list[str]:
+    """Column names of a CSV, read from the header row only."""
+    with open(path, "r", encoding="utf-8-sig", errors="replace") as fh:
+        header = fh.readline().rstrip("\r\n")
+    return [c.strip().strip('"') for c in header.split(",")]
 
 
 def bbox_predicate(x_col: str, y_col: str, bbox: tuple) -> tuple[str, list]:

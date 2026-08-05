@@ -16,8 +16,13 @@ export const useStore = create((set, get) => ({
 
   // Switching datasets resets all edge-file-scoped state so a stale LRM catalogue,
   // filter, selection, or color range from the previous dataset never leaks through.
+  // activeImage is cleared too: image names are platform-specific ("morphology" on
+  // Xenium, "Roi1_DAPI" on seqFISH), and DatasetPicker only learns the new dataset's
+  // image list asynchronously. Without this, OSD spends that window requesting the
+  // previous dataset's image from the new one and logging 404s.
   setDataset: (dataset) => set({
-    dataset, selectedGenes: null, allGenes: [], genesLoaded: false,
+    dataset, activeImage: null,
+    selectedGenes: null, allGenes: [], genesLoaded: false,
     platformCapabilities: null, categoryColorOverrides: {}, transcriptColorOverrides: {},
     edgeFile: "edges.parquet", lrmCatalogue: [], hiddenLrms: new Set(),
     selectedEdge: null, edgeColorRange: { vmin: null, vmax: null },

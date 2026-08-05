@@ -345,6 +345,252 @@
       "total": 0
     }
   },
+  "seqfish_instrument2": {
+    "bounds_full": {
+      "digest": "e93a1e7b407a17dc",
+      "keys": [
+        "cell_id",
+        "vertex_x",
+        "vertex_y"
+      ],
+      "n": 1147,
+      "n_cells": 62,
+      "total": 62
+    },
+    "bounds_half": {
+      "digest": "00324d9f4a380a13",
+      "n": 576,
+      "n_cells": 31,
+      "total": 62
+    },
+    "capabilities": {
+      "has_boundaries": true,
+      "has_morphology": true,
+      "has_transcripts": true,
+      "unit_label": "cell"
+    },
+    "cell_detail_0": "178c5b055b70bf72",
+    "cell_expression_0": {
+      "digest": "cb42bde899c5553c",
+      "n": 12
+    },
+    "cells_all": {
+      "digest": "20ddf74e79b6dafb",
+      "keys": [
+        "cell_area",
+        "cell_id",
+        "x_centroid",
+        "y_centroid"
+      ],
+      "n": 62
+    },
+    "cells_schema": {
+      "columns": {
+        "cell_area": "float64",
+        "x_centroid": "float64",
+        "y_centroid": "float64"
+      }
+    },
+    "color_gene_set": {
+      "digest": "90f5d24654cf35e1",
+      "max": 69.0,
+      "min": 0.0,
+      "n": 62,
+      "type": "continuous"
+    },
+    "color_meta__cell_area": {
+      "digest": "053579a6ae0afaf6",
+      "n": 62,
+      "type": "continuous"
+    },
+    "color_meta__x_centroid": {
+      "digest": "fb7ae1f6145429b3",
+      "n": 62,
+      "type": "continuous"
+    },
+    "color_meta__y_centroid": {
+      "digest": "f321b3a07f2159c4",
+      "n": 62,
+      "type": "continuous"
+    },
+    "gene_list": {
+      "digest": "6f1e76b0bd839528",
+      "n": 12
+    },
+    "info_keys": [
+      "format_variant",
+      "image_height_px",
+      "image_width_px",
+      "pixel_size",
+      "platform",
+      "roi"
+    ],
+    "pixel_size": 0.107161,
+    "platform": "seqfish",
+    "tx_bbox": {
+      "digest": "6f1eb67b21e4775c",
+      "keys": [
+        "feature_name",
+        "x_location",
+        "y_location"
+      ],
+      "n": 1750,
+      "total": 1750
+    },
+    "tx_bbox_half": {
+      "digest": "4474c8ca16d0c621",
+      "keys": [
+        "feature_name",
+        "x_location",
+        "y_location"
+      ],
+      "n": 875,
+      "total": 1750
+    },
+    "tx_full": {
+      "digest": "76f69c03e22fe137",
+      "keys": [
+        "feature_name",
+        "x_location",
+        "y_location"
+      ],
+      "n": 9051,
+      "total": 9051
+    },
+    "tx_gene0": {
+      "digest": "1526a4d6432a51ab",
+      "keys": [
+        "feature_name",
+        "x_location",
+        "y_location"
+      ],
+      "n": 370,
+      "total": 370
+    }
+  },
+  "seqfish_synthetic": {
+    "bounds_full": {
+      "digest": "fddd6d92608579b7",
+      "keys": [
+        "cell_id",
+        "vertex_x",
+        "vertex_y"
+      ],
+      "n": 509,
+      "n_cells": 36,
+      "total": 36
+    },
+    "bounds_half": {
+      "digest": "95dcb82de928fb18",
+      "n": 255,
+      "n_cells": 18,
+      "total": 36
+    },
+    "capabilities": {
+      "has_boundaries": true,
+      "has_morphology": true,
+      "has_transcripts": true,
+      "unit_label": "cell"
+    },
+    "cell_detail_0": "a19b5b2640d2fabc",
+    "cell_expression_0": {
+      "digest": "232ef4b1b7d7d7ff",
+      "n": 10
+    },
+    "cells_all": {
+      "digest": "3041ba131e9fb3b6",
+      "keys": [
+        "cell_area",
+        "cell_id",
+        "x_centroid",
+        "y_centroid"
+      ],
+      "n": 36
+    },
+    "cells_schema": {
+      "columns": {
+        "cell_area": "float64",
+        "x_centroid": "float64",
+        "y_centroid": "float64"
+      }
+    },
+    "color_gene_set": {
+      "digest": "900101042f1887aa",
+      "max": 55.0,
+      "min": 0.0,
+      "n": 36,
+      "type": "continuous"
+    },
+    "color_meta__cell_area": {
+      "digest": "4a1c35b956b246ba",
+      "n": 36,
+      "type": "continuous"
+    },
+    "color_meta__x_centroid": {
+      "digest": "7edb0328310a8096",
+      "n": 36,
+      "type": "continuous"
+    },
+    "color_meta__y_centroid": {
+      "digest": "9ba0a1c6fd2d6107",
+      "n": 36,
+      "type": "continuous"
+    },
+    "gene_list": {
+      "digest": "db5cf5f57e896e74",
+      "n": 10
+    },
+    "info_keys": [
+      "format_variant",
+      "image_height_px",
+      "image_width_px",
+      "pixel_size",
+      "platform",
+      "roi"
+    ],
+    "pixel_size": 0.107161,
+    "platform": "seqfish",
+    "tx_bbox": {
+      "digest": "ec4a84b78368cbf6",
+      "keys": [
+        "feature_name",
+        "x_location",
+        "y_location"
+      ],
+      "n": 365,
+      "total": 365
+    },
+    "tx_bbox_half": {
+      "digest": "4744fb8b1a6cf5f6",
+      "keys": [
+        "feature_name",
+        "x_location",
+        "y_location"
+      ],
+      "n": 182,
+      "total": 365
+    },
+    "tx_full": {
+      "digest": "973faff05f3a175c",
+      "keys": [
+        "feature_name",
+        "x_location",
+        "y_location"
+      ],
+      "n": 2550,
+      "total": 2550
+    },
+    "tx_gene0": {
+      "digest": "8081db8d41ee4c2e",
+      "keys": [
+        "feature_name",
+        "x_location",
+        "y_location"
+      ],
+      "n": 258,
+      "total": 258
+    }
+  },
   "xenium_human_breast_2fov": {
     "bounds_full": {
       "digest": "2e6916032112a6e5",

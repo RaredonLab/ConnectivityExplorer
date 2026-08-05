@@ -6,10 +6,11 @@ dataset directory.  Priority order matters when files from multiple platforms
 could theoretically co-exist in one folder (unlikely in practice).
 
 Supported platforms (detection order):
-  Xenium (10x Genomics)  — experiment.xenium
+  Xenium (10x Genomics)    — experiment.xenium
   Visium HD (10x Genomics) — square_???um/ subdirectory
-  MERSCOPE (Vizgen)      — cell_by_gene.csv or cell_metadata.csv
-  CosMx (Nanostring)     — *_tx_file.csv
+  MERSCOPE (Vizgen)        — cell_by_gene.csv or cell_metadata.csv
+  CosMx (Nanostring)       — *_tx_file.csv
+  seqFISH (Spatial Genomics) — *_CellCoordinates*.csv  (glob; registered last)
 
 To add a new platform: define a detector function, a factory function, and
 call _register(detector, factory) below.
@@ -51,6 +52,14 @@ def _is_cosmx(path: Path) -> bool:
     return any(path.glob("*_tx_file.csv"))
 
 
+def _is_seqfish(path: Path) -> bool:
+    # seqFISH ships no manifest or version file, so detection has to be a glob over
+    # ROI-prefixed filenames. Registered last for that reason — a glob is weaker
+    # evidence than an exact sentinel and must not shadow the platforms above.
+    from app.readers.seqfish_reader import SeqfishReader
+    return bool(SeqfishReader.find_cell_coordinates(path))
+
+
 # ── Factories ─────────────────────────────────────────────────────────────────
 
 def _make_xenium(path: Path) -> SpatialDatasetReader:
@@ -73,10 +82,16 @@ def _make_cosmx(path: Path) -> SpatialDatasetReader:
     return CosMxReader(path)
 
 
+def _make_seqfish(path: Path) -> SpatialDatasetReader:
+    from app.readers.seqfish_reader import SeqfishReader
+    return SeqfishReader(path)
+
+
 _register(_is_xenium,    _make_xenium,    "experiment.xenium (Xenium / 10x)")
 _register(_is_visium_hd, _make_visium_hd, "square_???um/ directory (Visium HD / 10x)")
 _register(_is_merscope,  _make_merscope,  "cell_by_gene.csv or cell_metadata.csv (MERSCOPE / Vizgen)")
 _register(_is_cosmx,     _make_cosmx,     "*_tx_file.csv (CosMx / Nanostring)")
+_register(_is_seqfish,   _make_seqfish,   "*_CellCoordinates*.csv (seqFISH / Spatial Genomics)")
 
 
 class ReaderFactory:
@@ -102,4 +117,4 @@ class ReaderFactory:
     @staticmethod
     def supported_platforms() -> list[str]:
         """Names of all registered platforms, in detection-priority order."""
-        return ["xenium", "visium_hd", "merscope", "cosmx"]
+        return ["xenium", "visium_hd", "merscope", "cosmx", "seqfish"]
