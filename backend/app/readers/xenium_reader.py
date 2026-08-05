@@ -11,10 +11,7 @@ import pandas as pd
 import pyarrow.parquet as pq
 
 from app.readers import duck
-from app.readers.base_reader import SpatialDatasetReader
-
-
-_UNSET = object()  # sentinel: "not yet loaded" vs "loaded, no data"
+from app.readers.base_reader import _UNSET, SpatialDatasetReader
 
 # Hard ceiling on transcripts returned in one response, independent of `fraction`.
 # Guards against a request for fraction=1.0 over a whole-tissue viewport trying to
@@ -27,7 +24,6 @@ class XeniumReader(SpatialDatasetReader):
     def __init__(self, dataset_path: Path):
         super().__init__(dataset_path)
         self._pixel_size: Optional[float] = None
-        self._supp_meta = _UNSET
         self._cells_full_cache = _UNSET
 
     # ── Identity ──────────────────────────────────────────────────────────────
@@ -380,109 +376,24 @@ class XeniumReader(SpatialDatasetReader):
                 "min": float(valid.min()), "max": float(valid.max())}
 
     # ── Supplemental metadata ─────────────────────────────────────────────────
+    # The loader itself lives on SpatialDatasetReader so every platform gets it.
+    # All Xenium contributes is the list of its own root CSVs to ignore.
 
     # Plain-CSV filenames in the dataset root that are standard Xenium outputs.
     # .csv.gz files are always skipped at root (exclusively Xenium data files).
-    _XENIUM_ROOT_SKIP = frozenset({
+    _ROOT_CSV_SKIP = frozenset({
         "cells.csv", "transcripts.csv", "metrics_summary.csv",
         "analysis_summary.csv", "gene_panel.csv",
     })
-
-    def _load_supplemental_metadata(self) -> Optional[pd.DataFrame]:
-        """
-        Merge user-defined cell metadata from:
-          1. {dataset}/cell-metadata/  — all CSV / parquet
-          2. {dataset}/               — plain .csv only, skipping known Xenium filenames
-        Multiple files are outer-joined on cell_id.  Cached per reader instance.
-        """
-        if self._supp_meta is not _UNSET:
-            return self._supp_meta  # type: ignore[return-value]
-
-        candidate_files: list[Path] = []
-        meta_dir = self.path / "cell-metadata"
-        if meta_dir.is_dir():
-            candidate_files.extend(sorted(meta_dir.iterdir()))
-        for f in sorted(self.path.iterdir()):
-            if not f.is_file():
-                continue
-            nl = f.name.lower()
-            if not nl.endswith(".csv"):
-                continue
-            if nl in self._XENIUM_ROOT_SKIP:
-                continue
-            candidate_files.append(f)
-
-        frames: list[pd.DataFrame] = []
-        for f in candidate_files:
-            try:
-                nl = f.name.lower()
-                if nl.endswith(".parquet"):
-                    df = pd.read_parquet(f)
-                    if "cell_id" not in df.columns:
-                        print(f"[xenium_reader] skip {f.name}: no 'cell_id' column")
-                        continue
-                elif nl.endswith(".csv.gz") or nl.endswith(".csv"):
-                    df = self._read_csv_with_barcodes(f)
-                    if df is None:
-                        continue
-                else:
-                    continue
-                df["cell_id"] = df["cell_id"].astype(str)
-                frames.append(df)
-                print(f"[xenium_reader] loaded supplemental metadata: {f.name} "
-                      f"({len(df)} rows, {len(df.columns)-1} extra columns)")
-            except Exception as exc:
-                print(f"[xenium_reader] warning: could not load {f.name}: {exc}")
-
-        if not frames:
-            self._supp_meta = None
-            return None
-
-        merged = frames[0]
-        for frame in frames[1:]:
-            new_cols = ["cell_id"] + [c for c in frame.columns if c not in merged.columns]
-            merged = merged.merge(frame[new_cols], on="cell_id", how="outer")
-        self._supp_meta = merged
-        return merged
-
-    def _read_csv_with_barcodes(self, path: Path) -> Optional[pd.DataFrame]:
-        """Read a CSV and promote the barcode column to 'cell_id'."""
-        try:
-            df = pd.read_csv(path, index_col=0)
-            df.index.name = "cell_id"
-            return df.reset_index()
-        except Exception:
-            pass
-        df = pd.read_csv(path)
-        if "cell_id" in df.columns:
-            return df
-        if "Unnamed: 0" in df.columns:
-            return df.rename(columns={"Unnamed: 0": "cell_id"})
-        first = df.columns[0]
-        if df[first].dtype == object and df[first].is_unique:
-            return df.rename(columns={first: "cell_id"})
-        print(f"[xenium_reader] skip {path.name}: cannot identify barcode column")
-        return None
 
     def _cells_full(self) -> Optional[pd.DataFrame]:
         """cells.parquet merged with supplemental metadata. Cached."""
         if self._cells_full_cache is not _UNSET:
             return self._cells_full_cache  # type: ignore[return-value]
-        cells = self._read_parquet("cells.parquet")
-        supp = self._load_supplemental_metadata()
-        if cells is None and supp is None:
-            self._cells_full_cache = None
-            return None
-        if supp is None:
-            self._cells_full_cache = cells
-            return cells
-        if cells is None:
-            self._cells_full_cache = supp
-            return supp
-        new_cols = [c for c in supp.columns if c not in cells.columns]
-        merged = cells.merge(supp[["cell_id"] + new_cols], on="cell_id", how="left") if new_cols else cells
-        self._cells_full_cache = merged
-        return merged
+        self._cells_full_cache = self._merge_supplemental(
+            self._read_parquet("cells.parquet")
+        )
+        return self._cells_full_cache  # type: ignore[return-value]
 
     # ── Internal helpers ──────────────────────────────────────────────────────
 

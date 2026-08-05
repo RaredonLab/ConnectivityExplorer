@@ -1,0 +1,572 @@
+{
+  "mouse_ileum_tiny": {
+    "bounds_full": {
+      "digest": "751d82c098ea8c71",
+      "keys": [
+        "cell_id",
+        "vertex_x",
+        "vertex_y"
+      ],
+      "n": 900,
+      "n_cells": 36,
+      "total": 36
+    },
+    "bounds_half": {
+      "digest": "12202c48c61571a9",
+      "n": 450,
+      "n_cells": 18,
+      "total": 36
+    },
+    "capabilities": {
+      "has_boundaries": true,
+      "has_morphology": true,
+      "has_transcripts": true,
+      "unit_label": "cell"
+    },
+    "cell_detail_0": "1ecb75740676415d",
+    "cell_expression_0": {
+      "digest": "e4e6708c3bf53c95",
+      "n": 3
+    },
+    "cells_all": {
+      "digest": "61dc45819d71ad01",
+      "keys": [
+        "cell_area",
+        "cell_id",
+        "control_codeword_counts",
+        "control_probe_counts",
+        "deprecated_codeword_counts",
+        "genomic_control_counts",
+        "nucleus_area",
+        "nucleus_count",
+        "segmentation_method",
+        "total_counts",
+        "transcript_counts",
+        "unassigned_codeword_counts",
+        "x_centroid",
+        "y_centroid"
+      ],
+      "n": 36
+    },
+    "cells_schema": {
+      "columns": {
+        "cell_area": "float64",
+        "control_codeword_counts": "int64",
+        "control_probe_counts": "int64",
+        "deprecated_codeword_counts": "int64",
+        "genomic_control_counts": "int64",
+        "nucleus_area": "float64",
+        "nucleus_count": "int64",
+        "segmentation_method": "object",
+        "total_counts": "int64",
+        "transcript_counts": "int64",
+        "unassigned_codeword_counts": "int64",
+        "x_centroid": "float64",
+        "y_centroid": "float64"
+      }
+    },
+    "color_gene_set": {
+      "digest": "dc12ce5b5034d05e",
+      "max": 1.0,
+      "min": 0.0,
+      "n": 36,
+      "type": "continuous"
+    },
+    "color_meta__transcript_counts": {
+      "digest": "5d8ffb43c4670f47",
+      "n": 36,
+      "type": "categorical"
+    },
+    "color_meta__x_centroid": {
+      "digest": "a8cef95f5f41c61d",
+      "n": 36,
+      "type": "continuous"
+    },
+    "color_meta__y_centroid": {
+      "digest": "d359977cedf42c6a",
+      "n": 36,
+      "type": "continuous"
+    },
+    "edge__edges.parquet__catalogue": {
+      "digest": "556c70f23429ddd8",
+      "n": 20
+    },
+    "edge__edges.parquet__color_lrm": {
+      "digest": "c92dc2b2c78706bf"
+    },
+    "edge__edges.parquet__detail0": "849ae8f80799f4b1",
+    "edge__edges.parquet__grouped": {
+      "digest": "74439cac91762e89",
+      "keys": [
+        "edge",
+        "is_autocrine",
+        "lrm_count",
+        "receiving_cell",
+        "receiving_type",
+        "score_sum",
+        "sending_cell",
+        "sending_type",
+        "x1",
+        "x2",
+        "y1",
+        "y2"
+      ],
+      "n": 223
+    },
+    "edge__edges.parquet__schema": {
+      "columns": {
+        "edge": "string",
+        "is_autocrine": "bool",
+        "ligand": "string",
+        "lrm": "string",
+        "lrm_id": "int64",
+        "receiving_cell": "string",
+        "receiving_type": "string",
+        "receptor": "string",
+        "score": "double",
+        "score_norm": "double",
+        "sending_cell": "string",
+        "sending_type": "string",
+        "x1": "double",
+        "x2": "double",
+        "y1": "double",
+        "y2": "double"
+      }
+    },
+    "edge__edges.parquet__scores": {
+      "digest": "17a091898e2af2fb",
+      "keys": [
+        "edge",
+        "visible_lrm_count",
+        "visible_score_sum"
+      ],
+      "n": 223
+    },
+    "edge__edges__edge.normalized.product.parquet__catalogue": {
+      "digest": "556c70f23429ddd8",
+      "n": 20
+    },
+    "edge__edges__edge.normalized.product.parquet__color_lrm": {
+      "digest": "519a5ef75304e432"
+    },
+    "edge__edges__edge.normalized.product.parquet__detail0": "540d31bfbd66002e",
+    "edge__edges__edge.normalized.product.parquet__grouped": {
+      "digest": "60404aba71d2d61d",
+      "keys": [
+        "edge",
+        "is_autocrine",
+        "lrm_count",
+        "receiving_cell",
+        "receiving_type",
+        "score_sum",
+        "sending_cell",
+        "sending_type",
+        "x1",
+        "x2",
+        "y1",
+        "y2"
+      ],
+      "n": 289
+    },
+    "edge__edges__edge.normalized.product.parquet__schema": {
+      "columns": {
+        "edge": "string",
+        "is_autocrine": "bool",
+        "ligand": "string",
+        "lrm": "string",
+        "lrm_id": "int64",
+        "receiving_cell": "string",
+        "receiving_type": "string",
+        "receptor": "string",
+        "score": "double",
+        "score_norm": "double",
+        "sending_cell": "string",
+        "sending_type": "string",
+        "x1": "double",
+        "x2": "double",
+        "y1": "double",
+        "y2": "double"
+      }
+    },
+    "edge__edges__edge.normalized.product.parquet__scores": {
+      "digest": "83337511682a043f",
+      "keys": [
+        "edge",
+        "visible_lrm_count",
+        "visible_score_sum"
+      ],
+      "n": 289
+    },
+    "edge__edges__edge.raw.minimum.parquet__catalogue": {
+      "digest": "556c70f23429ddd8",
+      "n": 20
+    },
+    "edge__edges__edge.raw.minimum.parquet__color_lrm": {
+      "digest": "ea178fdb2da7ef01"
+    },
+    "edge__edges__edge.raw.minimum.parquet__detail0": "3efe150623a34474",
+    "edge__edges__edge.raw.minimum.parquet__grouped": {
+      "digest": "ba6b68c6da29e63c",
+      "keys": [
+        "edge",
+        "is_autocrine",
+        "lrm_count",
+        "receiving_cell",
+        "receiving_type",
+        "score_sum",
+        "sending_cell",
+        "sending_type",
+        "x1",
+        "x2",
+        "y1",
+        "y2"
+      ],
+      "n": 155
+    },
+    "edge__edges__edge.raw.minimum.parquet__schema": {
+      "columns": {
+        "edge": "string",
+        "is_autocrine": "bool",
+        "ligand": "string",
+        "lrm": "string",
+        "lrm_id": "int64",
+        "receiving_cell": "string",
+        "receiving_type": "string",
+        "receptor": "string",
+        "score": "double",
+        "score_norm": "double",
+        "sending_cell": "string",
+        "sending_type": "string",
+        "x1": "double",
+        "x2": "double",
+        "y1": "double",
+        "y2": "double"
+      }
+    },
+    "edge__edges__edge.raw.minimum.parquet__scores": {
+      "digest": "99276f997c4867c5",
+      "keys": [
+        "edge",
+        "visible_lrm_count",
+        "visible_score_sum"
+      ],
+      "n": 155
+    },
+    "gene_list": {
+      "digest": "09d44724709d2b24",
+      "n": 5035
+    },
+    "info_keys": [
+      "analysis_sw_version",
+      "analysis_uuid",
+      "calibration_uuid",
+      "cassette_name",
+      "cassette_uuid",
+      "chemistry_version",
+      "experiment_uuid",
+      "fraction_transcripts_assigned",
+      "images",
+      "imported_cell_frac",
+      "instrument_sn",
+      "instrument_sw_version",
+      "major_version",
+      "minor_version",
+      "nuclear_transcripts_per_100um",
+      "num_cells",
+      "panel_design_id",
+      "panel_name",
+      "panel_num_targets_custom",
+      "panel_num_targets_predesigned",
+      "panel_organism",
+      "panel_predesigned_id",
+      "panel_tissue_type",
+      "panel_type",
+      "patch_version",
+      "pixel_size",
+      "platform",
+      "preservation_method",
+      "region_area",
+      "region_name",
+      "roi_uuid",
+      "run_name",
+      "run_start_time",
+      "segmentation_stain",
+      "segmented_cell_boundary_frac",
+      "segmented_cell_interior_frac",
+      "segmented_cell_nuc_expansion_frac",
+      "segmented_cell_stain_frac",
+      "slide_id",
+      "thickness_of_high_quality_decoded_transcripts",
+      "total_cell_area",
+      "transcripts_per_100um",
+      "transcripts_per_cell",
+      "well_uuid",
+      "xenium_explorer_files",
+      "z_step_size"
+    ],
+    "pixel_size": 0.2125,
+    "platform": "xenium",
+    "tx_bbox": {
+      "digest": "84b62ff069bb9014",
+      "keys": [
+        "feature_name",
+        "qv",
+        "x_location",
+        "y_location"
+      ],
+      "n": 602,
+      "total": 602
+    },
+    "tx_bbox_half": {
+      "digest": "e8f25ce5cb6b26b7",
+      "keys": [
+        "feature_name",
+        "qv",
+        "x_location",
+        "y_location"
+      ],
+      "n": 301,
+      "total": 602
+    },
+    "tx_full": {
+      "digest": "3bea25b8419eb09f",
+      "keys": [
+        "feature_name",
+        "qv",
+        "x_location",
+        "y_location"
+      ],
+      "n": 1985,
+      "total": 1985
+    },
+    "tx_gene0": {
+      "digest": "e3b0c44298fc1c14",
+      "n": 0,
+      "total": 0
+    }
+  },
+  "xenium_human_breast_2fov": {
+    "bounds_full": {
+      "digest": "2e6916032112a6e5",
+      "keys": [
+        "cell_id",
+        "vertex_x",
+        "vertex_y"
+      ],
+      "n": 181804,
+      "n_cells": 7275,
+      "total": 7275
+    },
+    "bounds_half": {
+      "digest": "ff23537fade12766",
+      "n": 90908,
+      "n_cells": 3638,
+      "total": 7275
+    },
+    "capabilities": {
+      "has_boundaries": true,
+      "has_morphology": true,
+      "has_transcripts": true,
+      "unit_label": "cell"
+    },
+    "cell_detail_0": "a359455dace01553",
+    "cell_expression_0": {
+      "digest": "bcc35f27b554d1f2",
+      "n": 32
+    },
+    "cells_all": {
+      "digest": "278bcced1ed14e24",
+      "keys": [
+        "cell_area",
+        "cell_id",
+        "control_codeword_counts",
+        "control_probe_counts",
+        "deprecated_codeword_counts",
+        "nucleus_area",
+        "total_counts",
+        "transcript_counts",
+        "unassigned_codeword_counts",
+        "x_centroid",
+        "y_centroid"
+      ],
+      "n": 7275
+    },
+    "cells_schema": {
+      "columns": {
+        "cell_area": "float64",
+        "control_codeword_counts": "int64",
+        "control_probe_counts": "int64",
+        "deprecated_codeword_counts": "int64",
+        "nucleus_area": "float64",
+        "total_counts": "int64",
+        "transcript_counts": "int64",
+        "unassigned_codeword_counts": "int64",
+        "x_centroid": "float64",
+        "y_centroid": "float64"
+      }
+    },
+    "color_gene_set": {
+      "digest": "7e62d7c4719e9927",
+      "max": 37.0,
+      "min": 0.0,
+      "n": 7275,
+      "type": "continuous"
+    },
+    "color_meta__transcript_counts": {
+      "digest": "8f4b807981994590",
+      "n": 7275,
+      "type": "continuous"
+    },
+    "color_meta__x_centroid": {
+      "digest": "8b33aa9839229c15",
+      "n": 7275,
+      "type": "continuous"
+    },
+    "color_meta__y_centroid": {
+      "digest": "46264600ea1f3396",
+      "n": 7275,
+      "type": "continuous"
+    },
+    "edge__edges.parquet__catalogue": {
+      "digest": "556c70f23429ddd8",
+      "n": 20
+    },
+    "edge__edges.parquet__color_lrm": {
+      "digest": "f454e9ec05ba3d82"
+    },
+    "edge__edges.parquet__detail0": "502de7ce02b60495",
+    "edge__edges.parquet__grouped": {
+      "digest": "2587c77fd6f6a1b3",
+      "keys": [
+        "edge",
+        "is_autocrine",
+        "lrm_count",
+        "receiving_cell",
+        "receiving_type",
+        "score_sum",
+        "sending_cell",
+        "sending_type",
+        "x1",
+        "x2",
+        "y1",
+        "y2"
+      ],
+      "n": 44759
+    },
+    "edge__edges.parquet__schema": {
+      "columns": {
+        "edge": "string",
+        "is_autocrine": "bool",
+        "ligand": "string",
+        "lrm": "string",
+        "lrm_id": "int64",
+        "receiving_cell": "string",
+        "receiving_type": "string",
+        "receptor": "string",
+        "score": "double",
+        "score_norm": "double",
+        "sending_cell": "string",
+        "sending_type": "string",
+        "x1": "double",
+        "x2": "double",
+        "y1": "double",
+        "y2": "double"
+      }
+    },
+    "edge__edges.parquet__scores": {
+      "digest": "96471c6f8561b653",
+      "keys": [
+        "edge",
+        "visible_lrm_count",
+        "visible_score_sum"
+      ],
+      "n": 44759
+    },
+    "gene_list": {
+      "digest": "bfd0eef30077d962",
+      "n": 280
+    },
+    "info_keys": [
+      "analysis_sw_version",
+      "analysis_uuid",
+      "calibration_uuid",
+      "cassette_name",
+      "cassette_uuid",
+      "experiment_uuid",
+      "images",
+      "instrument_sn",
+      "instrument_sw_version",
+      "major_version",
+      "minor_version",
+      "num_cells",
+      "panel_design_id",
+      "panel_name",
+      "panel_num_targets_custom",
+      "panel_num_targets_predesigned",
+      "panel_organism",
+      "panel_predesigned_id",
+      "panel_tissue_type",
+      "patch_version",
+      "pixel_size",
+      "platform",
+      "preservation_method",
+      "region_name",
+      "roi_uuid",
+      "run_name",
+      "run_start_time",
+      "segmentation_stain",
+      "slide_id",
+      "transcripts_per_100um",
+      "transcripts_per_cell",
+      "well_uuid",
+      "xenium_explorer_files",
+      "z_step_size"
+    ],
+    "pixel_size": 0.2125,
+    "platform": "xenium",
+    "tx_bbox": {
+      "digest": "958f4de8b1dd19b3",
+      "keys": [
+        "feature_name",
+        "qv",
+        "x_location",
+        "y_location"
+      ],
+      "n": 200000,
+      "total": 228952
+    },
+    "tx_bbox_half": {
+      "digest": "cfbe3c924fa10464",
+      "keys": [
+        "feature_name",
+        "qv",
+        "x_location",
+        "y_location"
+      ],
+      "n": 114476,
+      "total": 228952
+    },
+    "tx_full": {
+      "digest": "4531f4ac79155e19",
+      "keys": [
+        "feature_name",
+        "qv",
+        "x_location",
+        "y_location"
+      ],
+      "n": 200000,
+      "total": 1113950
+    },
+    "tx_gene0": {
+      "digest": "6b2cf14148751692",
+      "keys": [
+        "feature_name",
+        "qv",
+        "x_location",
+        "y_location"
+      ],
+      "n": 62,
+      "total": 62
+    }
+  }
+}

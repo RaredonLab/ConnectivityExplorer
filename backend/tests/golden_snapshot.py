@@ -1,0 +1,313 @@
+#!/usr/bin/env python3
+"""
+Golden-output snapshot for the reader layer.
+
+This repo has no test suite, so cross-platform work on the readers has nothing to
+catch a regression. This script is the minimum viable guard: it exercises every
+reader method against the bundled datasets, digests the results, and compares them
+to a recorded baseline.
+
+It calls the readers directly rather than going over HTTP, so no server is needed
+and a failure points at the reader instead of the transport.
+
+Usage
+-----
+    python tests/golden_snapshot.py --record     # write the baseline
+    python tests/golden_snapshot.py              # check against it
+    python tests/golden_snapshot.py -v           # show every probe, not just failures
+
+Run from the ``backend/`` directory. Exits non-zero on any mismatch, so it can be
+wired into CI or a pre-commit hook later.
+
+Determinism
+-----------
+Every sampled query must be reproducible or the baseline is worthless. The readers
+seed their sampling (``duck.SAMPLE_SEED``), so repeated calls return identical rows.
+Floats are rounded before hashing to absorb platform FP noise.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import math
+import sys
+import traceback
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+DATA_ROOT = Path(__file__).resolve().parent.parent.parent / "sample_data"
+BASELINE = Path(__file__).resolve().parent / "golden_baseline.json"
+
+# Datasets to cover. Missing ones are skipped with a note rather than failing, so the
+# script still works in a checkout that only has the committed tiny dataset.
+DATASETS = ["mouse_ileum_tiny", "xenium_human_breast_2fov", "seqfish_instrument2"]
+
+FLOAT_PLACES = 4
+
+
+def _canon(obj):
+    """Recursively round floats and drop NaN/Inf so digests are stable."""
+    if isinstance(obj, float):
+        if not math.isfinite(obj):
+            return None
+        return round(obj, FLOAT_PLACES)
+    if isinstance(obj, dict):
+        return {str(k): _canon(v) for k, v in sorted(obj.items(), key=lambda kv: str(kv[0]))}
+    if isinstance(obj, (list, tuple)):
+        return [_canon(v) for v in obj]
+    if hasattr(obj, "item"):          # numpy scalar
+        try:
+            return _canon(obj.item())
+        except Exception:
+            return str(obj)
+    if isinstance(obj, (str, int, bool)) or obj is None:
+        return obj
+    return str(obj)
+
+
+def digest(obj) -> str:
+    payload = json.dumps(_canon(obj), sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+
+def digest_rows(records) -> str:
+    """Order-independent digest of a list of records.
+
+    Row order is deliberately not part of the API contract — ``query_grouped`` uses
+    ``ORDER BY RANDOM()`` and SQL ``GROUP BY`` makes no ordering promise — so hashing
+    in returned order produces a baseline that fails on every run. Sorting by the
+    canonical serialization tests the *content* of the result set, which is what we
+    actually care about not regressing.
+    """
+    if not isinstance(records, (list, tuple)):
+        return digest(records)
+    canon = [json.dumps(_canon(r), sort_keys=True, separators=(",", ":")) for r in records]
+    canon.sort()
+    return hashlib.sha256("\n".join(canon).encode()).hexdigest()[:16]
+
+
+class Probes:
+    """Collects {probe_name: value} for one dataset."""
+
+    def __init__(self):
+        self.out: dict[str, object] = {}
+
+    def record(self, name, fn):
+        """Run fn(); store a summary. Exceptions are recorded, not raised, so one
+        broken method doesn't hide regressions in all the others."""
+        try:
+            self.out[name] = fn()
+        except Exception as exc:
+            self.out[name] = f"ERROR: {type(exc).__name__}: {exc}"
+
+    # Summaries keep the baseline small and readable: a count plus a digest catches
+    # both "wrong number of rows" and "same number, different values".
+    @staticmethod
+    def rows(records, total=None):
+        summary = {"n": len(records), "digest": digest_rows(records)}
+        if total is not None:
+            summary["total"] = total
+        if records:
+            summary["keys"] = sorted(records[0].keys())
+        return summary
+
+
+def probe_spatial(reader, p: Probes) -> None:
+    p.record("platform", lambda: reader.platform)
+    p.record("pixel_size", lambda: round(float(reader.pixel_size), 6))
+    p.record("capabilities", lambda: _canon(reader.capabilities()))
+    p.record("info_keys", lambda: sorted(str(k) for k in reader.info().keys()))
+
+    p.record("gene_list", lambda: {"n": len(reader.gene_list()),
+                                   "digest": digest(sorted(reader.gene_list()))})
+    p.record("cells_schema", lambda: _canon(reader.cells_schema()))
+
+    cells = reader.cells()
+    p.record("cells_all", lambda: Probes.rows(cells))
+
+    caps = reader.capabilities()
+
+    # ── transcripts: full, bbox, gene-filtered, sampled ──────────────────────
+    if caps.get("has_transcripts", True):
+        full = reader.transcripts(fraction=1.0)
+        p.record("tx_full", lambda: Probes.rows(full["transcripts"], full["total"]))
+
+        # A bbox covering the lower-left quadrant of the cell centroid extent.
+        if cells:
+            xs = [c.get("x_centroid") for c in cells if c.get("x_centroid") is not None]
+            ys = [c.get("y_centroid") for c in cells if c.get("y_centroid") is not None]
+            if xs and ys:
+                bbox = (min(xs), min(ys), (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2)
+                q = reader.transcripts(bbox=bbox, fraction=1.0)
+                p.record("tx_bbox", lambda: Probes.rows(q["transcripts"], q["total"]))
+                h = reader.transcripts(bbox=bbox, fraction=0.5)
+                p.record("tx_bbox_half", lambda: Probes.rows(h["transcripts"], h["total"]))
+
+        genes = reader.gene_list()
+        if genes:
+            g = reader.transcripts(genes=[genes[0]], fraction=1.0)
+            p.record("tx_gene0", lambda: Probes.rows(g["transcripts"], g["total"]))
+
+    # ── boundaries: full and sampled ─────────────────────────────────────────
+    if caps.get("has_boundaries", True):
+        b = reader.cell_boundaries(fraction=1.0)
+        rows = b["boundaries"] if isinstance(b, dict) else b
+        total = b.get("total") if isinstance(b, dict) else None
+        p.record("bounds_full", lambda: {
+            **Probes.rows(rows, total),
+            "n_cells": len({r["cell_id"] for r in rows}) if rows else 0,
+        })
+        bq = reader.cell_boundaries(fraction=0.5)
+        rq = bq["boundaries"] if isinstance(bq, dict) else bq
+        p.record("bounds_half", lambda: {
+            "n": len(rq),
+            "n_cells": len({r["cell_id"] for r in rq}) if rq else 0,
+            "total": bq.get("total") if isinstance(bq, dict) else None,
+            "digest": digest_rows(rq),
+        })
+
+    # ── per-cell detail + expression ─────────────────────────────────────────
+    if cells:
+        cid = cells[0]["cell_id"]
+        p.record("cell_detail_0", lambda: digest(reader.cell_detail(cid)))
+        p.record("cell_expression_0", lambda: {
+            "n": len(reader.cell_expression(cid)),
+            "digest": digest(reader.cell_expression(cid)),
+        })
+
+    # ── color values ─────────────────────────────────────────────────────────
+    genes = reader.gene_list()
+    if genes:
+        cv = reader.color_values("gene_set", None, genes[: min(5, len(genes))])
+        p.record("color_gene_set", lambda: {
+            "type": cv.get("type"), "n": len(cv.get("values", {})),
+            "min": _canon(cv.get("min")), "max": _canon(cv.get("max")),
+            "digest": digest(cv.get("values")),
+        })
+    schema = reader.cells_schema().get("columns", {})
+    for field in list(schema)[:3]:
+        cvm = reader.color_values("metadata", field, None)
+        p.record(f"color_meta__{field}", lambda cvm=cvm: {
+            "type": cvm.get("type"), "n": len(cvm.get("values", {})),
+            "digest": digest(cvm.get("values")),
+        })
+
+
+def probe_edges(dataset_dir: Path, pixel_size: float, p: Probes) -> None:
+    from app.readers.edge_reader import EdgeReader
+
+    sources = []
+    if (dataset_dir / "edges.parquet").exists():
+        sources.append(("edges.parquet", dataset_dir / "edges.parquet"))
+    edir = dataset_dir / "edges"
+    if edir.is_dir():
+        for f in sorted(edir.glob("*.parquet")):
+            sources.append((f"edges/{f.name}", f))
+
+    for label, path in sources:
+        er = EdgeReader(path, pixel_size=pixel_size)
+        key = label.replace("/", "__")
+        p.record(f"edge__{key}__schema", lambda er=er: _canon(er.schema()))
+        p.record(f"edge__{key}__catalogue", lambda er=er: {
+            "n": len(er.lrm_catalogue()), "digest": digest_rows(er.lrm_catalogue())})
+        grouped = er.query_grouped(density=1.0)
+        p.record(f"edge__{key}__grouped", lambda g=grouped: Probes.rows(g))
+        p.record(f"edge__{key}__scores", lambda er=er: Probes.rows(
+            er.query_scores(excluded_lrms=[])))
+        p.record(f"edge__{key}__color_lrm", lambda er=er: {
+            "digest": digest(er.edge_color_values("lrm_set", None, None))})
+        if grouped:
+            # query_grouped uses ORDER BY RANDOM(), so grouped[0] is a different edge
+            # every run. Take the lexicographic minimum instead, or the probe reports
+            # a spurious failure on each invocation.
+            eid = min(str(g["edge"]) for g in grouped if g.get("edge") is not None)
+            p.record(f"edge__{key}__detail0", lambda er=er, eid=eid:
+                     digest(er.edge_detail(eid)))
+
+
+def collect() -> dict:
+    from app.readers.reader_factory import ReaderFactory
+
+    snap: dict[str, dict] = {}
+    for name in DATASETS:
+        d = DATA_ROOT / name
+        if not d.exists():
+            print(f"  · {name}: not present, skipped")
+            continue
+        if not ReaderFactory.is_dataset(d):
+            print(f"  · {name}: not recognised as a dataset, skipped")
+            continue
+        p = Probes()
+        try:
+            reader = ReaderFactory.detect(d)
+            probe_spatial(reader, p)
+            probe_edges(d, reader.pixel_size, p)
+        except Exception:
+            p.out["__fatal__"] = traceback.format_exc(limit=3)
+        snap[name] = p.out
+        print(f"  · {name}: {len(p.out)} probes")
+    return snap
+
+
+def compare(old: dict, new: dict, verbose: bool) -> int:
+    failures = 0
+    for ds in sorted(set(old) | set(new)):
+        if ds not in old:
+            print(f"\n[NEW DATASET] {ds} — not in baseline (re-record to adopt)")
+            continue
+        if ds not in new:
+            print(f"\n[MISSING] {ds} — in baseline but not produced now")
+            failures += 1
+            continue
+        o, n = old[ds], new[ds]
+        keys = sorted(set(o) | set(n))
+        diffs = [k for k in keys if o.get(k) != n.get(k)]
+        if not diffs:
+            print(f"  OK   {ds}  ({len(keys)} probes identical)")
+            if verbose:
+                for k in keys:
+                    print(f"         {k} = {json.dumps(n[k])[:90]}")
+            continue
+        failures += len(diffs)
+        print(f"  FAIL {ds}  ({len(diffs)} of {len(keys)} probes changed)")
+        for k in diffs:
+            print(f"     ✗ {k}")
+            print(f"         baseline: {json.dumps(o.get(k))[:160]}")
+            print(f"         current : {json.dumps(n.get(k))[:160]}")
+    return failures
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--record", action="store_true",
+                    help="write the baseline instead of comparing")
+    ap.add_argument("-v", "--verbose", action="store_true")
+    args = ap.parse_args()
+
+    print(f"DATA_ROOT = {DATA_ROOT}")
+    snap = collect()
+
+    if args.record:
+        BASELINE.write_text(json.dumps(snap, indent=2, sort_keys=True) + "\n")
+        n = sum(len(v) for v in snap.values())
+        print(f"\nrecorded {n} probes across {len(snap)} datasets → {BASELINE.name}")
+        return 0
+
+    if not BASELINE.exists():
+        print(f"\nno baseline at {BASELINE} — run with --record first")
+        return 2
+
+    old = json.loads(BASELINE.read_text())
+    print()
+    failures = compare(old, snap, args.verbose)
+    if failures:
+        print(f"\n{failures} probe(s) changed. If intentional, re-run with --record.")
+        return 1
+    print("\nall probes match the baseline.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
