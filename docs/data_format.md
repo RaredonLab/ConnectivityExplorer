@@ -1,6 +1,23 @@
 # Edge Data Format (NICHESv2)
 
-This document specifies the `edges.parquet` file produced by `export_for_TissuePlex()` from the NICHESv2 R package. TissuePlex reads this file alongside any supported platform output folder.
+This document specifies the `edges.parquet` file produced by `export_to_TissuePlex()` from the NICHESv2 R package. TissuePlex reads this file alongside any supported platform output folder.
+
+> **Install NICHESv2 from the `dev` branch.** `export_to_TissuePlex()` exists only there —
+> the `main` branch does not have it. `arrow` is also required but is only in `Suggests`,
+> so install it explicitly:
+>
+> ```r
+> install.packages("arrow")
+> remotes::install_github("RaredonLab/NICHESv2", ref = "dev")
+> ```
+>
+> **Coordinates must be in the same units the platform reader reports.**
+> `export_to_TissuePlex()` copies `meta.data$x` / `$y` straight into `x1,y1,x2,y2` with no
+> conversion, and TissuePlex divides those by the dataset's `pixel_size` on the assumption
+> they are native µm. That is correct for Xenium, whose coordinates are already µm. For a
+> platform whose coordinates are in **pixels** (Visium HD), convert to µm *before* calling
+> `create_NICHESObject()`, or the edge layer will be offset from the cells by a factor of
+> `pixel_size`.
 
 The format is **platform-agnostic** — it works with Xenium, MERSCOPE, CosMx, Visium HD, or any other platform as long as the `sending_cell` / `receiving_cell` barcodes match those in the platform's cell/spot table.
 

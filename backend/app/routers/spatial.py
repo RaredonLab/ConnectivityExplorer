@@ -66,11 +66,14 @@ def dataset_info(dataset: str):
     return {**r.info(), "capabilities": r.capabilities()}
 
 
-_TIFF_EXTS = (".ome.tiff", ".ome.tif", ".tiff", ".tif")
+# Order matters: the compound .ome.* suffixes must be tried before the bare ones
+# so "morphology.ome.tif" yields the stem "morphology", not "morphology.ome".
+# PNG is here because Visium HD ships tissue_hires_image.png rather than a TIFF.
+_TIFF_EXTS = (".ome.tiff", ".ome.tif", ".tiff", ".tif", ".png")
 
 
 def _strip_tiff_ext(name: str) -> Optional[str]:
-    """Return the filename stem if it is a TIFF variant, else None."""
+    """Return the filename stem if it is a supported image, else None."""
     for ext in _TIFF_EXTS:
         if name.lower().endswith(ext):
             return name[: -len(ext)]

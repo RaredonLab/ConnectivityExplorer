@@ -36,13 +36,13 @@ Spatial transcriptomics platforms (Xenium, seqFISH, Visium HD, MERSCOPE, CosMx) 
 |---|---|:---:|:---:|:---:|:---:|
 | **Xenium** | 10x Genomics | ✓ | ✓ | ✓ | ✓ |
 | **seqFISH** | Spatial Genomics | ✓ | ✓ | ✓ | ✓ |
-| **Visium HD** | 10x Genomics | ✓ | — | — | ✓ |
+| **Visium HD** | 10x Genomics | ✓ | — | ✓ (bins) | ✓ |
 | **MERSCOPE** | Vizgen | — | ✓ | — | ✓ |
 | **CosMx** | Nanostring | — | ✓ | — | ✓ |
 
 Xenium and seqFISH are the complete implementations. seqFISH means the commercial **Spatial Genomics GenePS** output, not the academic seqFISH/seqFISH+ method, which has no standard file layout; the current v2 layout is fully supported, and legacy v1 reads cells and transcripts but not boundaries.
 
-The other readers cover cells, transcripts, and metadata coloring; boundary parsing is platform-specific and not yet implemented for them (MERSCOPE stores polygons in HDF5, CosMx in per-FOV label TIFFs). Visium HD renders bins as points rather than polygons and has no per-molecule transcript coordinates. Each reader declares what it supports via a capability flag, and the UI hides layers the platform cannot serve.
+The other readers cover cells, transcripts, and metadata coloring; boundary parsing is platform-specific and not yet implemented for them (MERSCOPE stores polygons in HDF5, CosMx in per-FOV label TIFFs). Visium HD renders each square bin as a polygon — so fill, colour-by, picking and region selection all work — but has no per-molecule transcript coordinates. Each reader declares what it supports via a capability flag, and the UI hides layers the platform cannot serve.
 
 The edge connectivity layer (NICHESv2 output) works with any platform — it is platform-agnostic as long as cell barcodes match.
 
@@ -92,8 +92,11 @@ DATA_PATH=/absolute/path/to/your/datasets docker compose up --build
     Roi1_DAPI.tiff
     edges.parquet
 
-  visium_hd_run_C/
-    square_008um/           ← Visium HD sentinel
+  visium_hd_run_C/          ← Space Ranger outs/
+    binned_outputs/
+      square_008um/         ← Visium HD sentinel
+        filtered_feature_bc_matrix.h5
+        spatial/{tissue_positions.parquet, scalefactors_json.json, tissue_hires_image.png}
     edges.parquet
 
   merscope_run_D/

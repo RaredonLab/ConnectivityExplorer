@@ -603,6 +603,92 @@
       "total": 258
     }
   },
+  "visium_hd_tiny": {
+    "bounds_full": {
+      "digest": "cd35b92208180b99",
+      "keys": [
+        "cell_id",
+        "vertex_x",
+        "vertex_y"
+      ],
+      "n": 83320,
+      "n_cells": 20830,
+      "total": 20830
+    },
+    "bounds_half": {
+      "digest": "95081e497eddedcf",
+      "n": 41660,
+      "n_cells": 10415,
+      "total": 20830
+    },
+    "capabilities": {
+      "has_boundaries": true,
+      "has_morphology": true,
+      "has_transcripts": false,
+      "unit_label": "bin"
+    },
+    "cell_detail_0": "335cd56d146cb6f7",
+    "cell_expression_0": {
+      "digest": "44136fa355b3678a",
+      "n": 0
+    },
+    "cells_all": {
+      "digest": "86c7b0d0860673e8",
+      "keys": [
+        "array_col",
+        "array_row",
+        "cell_id",
+        "x_centroid",
+        "y_centroid"
+      ],
+      "n": 20830
+    },
+    "cells_schema": {
+      "columns": {
+        "array_col": "uint32",
+        "array_row": "uint32",
+        "x_centroid": "float64",
+        "y_centroid": "float64"
+      }
+    },
+    "color_gene_set": {
+      "digest": "654b57fb083efe14",
+      "max": 1.0,
+      "min": 0.0,
+      "n": 20830,
+      "type": "continuous"
+    },
+    "color_meta__array_row": {
+      "digest": "e437cf85ebbc2bf8",
+      "n": 20830,
+      "type": "continuous"
+    },
+    "color_meta__x_centroid": {
+      "digest": "c41021fad7667686",
+      "n": 20830,
+      "type": "continuous"
+    },
+    "color_meta__y_centroid": {
+      "digest": "026a12c0bd52c1d9",
+      "n": 20830,
+      "type": "continuous"
+    },
+    "gene_list": {
+      "digest": "40a2e076472f6c63",
+      "n": 32245
+    },
+    "info_keys": [
+      "available_bins",
+      "bin",
+      "bin_side_px",
+      "bin_size_um",
+      "pixel_size",
+      "platform",
+      "tissue_hires_scalef"
+    ],
+    "pixel_size": 1.003128,
+    "platform": "visium_hd"
+  },
   "xenium_human_breast_2fov": {
     "bounds_full": {
       "digest": "2e6916032112a6e5",

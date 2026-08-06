@@ -54,7 +54,7 @@ The backend uses an abstract reader pattern. All platform readers inherit from
 | Platform | Sentinel file |
 |---|---|
 | Xenium (10x Genomics) | `experiment.xenium` |
-| Visium HD (10x Genomics) | a `square_???um/` subdirectory |
+| Visium HD (10x Genomics) | `binned_outputs/square_*um/` (or a top-level `square_???um/`) |
 | MERSCOPE (Vizgen) | `cell_by_gene.csv` or `cell_metadata.csv` |
 | CosMx (Nanostring) | `*_tx_file.csv` |
 | seqFISH (Spatial Genomics) | `*_CellCoordinates*.csv` — a glob, so registered **last** |
@@ -70,10 +70,9 @@ and boundary layers rather than returning empty arrays for them.
 
 **Implementation status:**
 - Xenium: fully implemented
-- Visium HD: bins as points (`cells`, `cells_schema`, `cell_detail` from
-  `tissue_positions.parquet`); declares `has_transcripts: False`, `has_boundaries: False`,
-  `unit_label: "bin"`. `gene_list`, `cell_expression`, and gene-set color-values are stubs
-  pending `filtered_feature_bc_matrix.h5` parsing.
+- Visium HD: implemented against a real Space Ranger 4.0.1 `outs/` tree — bins, bin
+  outlines, expression, and both color-value modes. `has_transcripts: False` (bin-level
+  UMI counts only, no molecule coordinates); `unit_label: "bin"`. See its own section.
 - MERSCOPE: cells, transcripts, genes, color-values (metadata + gene-set) implemented;
   `cell_boundaries()` returns empty and `has_boundaries: False` (HDF5 polygon format
   not yet parsed)
@@ -87,13 +86,9 @@ and boundary layers rather than returning empty arrays for them.
   dependency. See the seqFISH section below — its coordinate handling is unlike any other
   reader and is the thing to understand before touching it.
 
-**Interface caveat**: `VisiumHDReader.transcripts()` and `.cell_boundaries()` still carry
-the pre-refactor signature (`limit=` instead of `fraction=`, returning `[]` instead of the
-`{"transcripts"/"boundaries": [...], "total": N}` dict every other reader returns). The
-router calls them with `fraction=`, so a direct call would raise `TypeError`. It is
-unreachable today only because the capability flags stop the frontend from asking. Fix the
-signatures before relying on those flags. Note also that `base_reader.py`'s docstrings
-still say `cell_boundaries -> list[dict]` while every implementation returns the dict form.
+**Interface note**: every reader now matches the base signature (`fraction=`, dict return).
+`base_reader.py`'s docstring for `cell_boundaries` still says `-> list[dict]` while all
+implementations return the dict form — the docstring is the thing that is wrong.
 
 ---
 
@@ -119,7 +114,7 @@ backend/
                              Mixed µm/pixel coordinate handling — see its own section.
       duck.py                Shared DuckDB query helpers used by the spatial readers
       spatial_cache.py       Spatially-sorted parquet cache (build on first access)
-      visium_hd_reader.py    Visium HD implementation — bins as points; partial (see status above)
+      visium_hd_reader.py    Visium HD — bins as square polygons; see its own section
       merscope_reader.py     MERSCOPE implementation (inherits SpatialDatasetReader)
       cosmx_reader.py        CosMx implementation (inherits SpatialDatasetReader)
       edge_reader.py         reads edges.parquet; query_grouped(), query_scores(), lrm_catalogue(), edge_color_values(), edge_detail();
@@ -216,7 +211,7 @@ Platform-agnostic — works with any spatial dataset as long as cell barcodes ma
 `pixel_size` (from the reader) when serving to the frontend.
 
 The `sample_data/make_edges.py` script generates synthetic demo data in this format.
-Real data comes from `export_for_TissuePlex()` in the NICHESv2 R package.
+Real data comes from `export_to_TissuePlex()` in the NICHESv2 R package.
 
 ---
 
@@ -622,6 +617,60 @@ one row per directed edge (GROUP BY edge, ORDER BY RANDOM()). For a 168M-row par
 (~300K edges × 559 LRMs) this is ~500× fewer rows than the raw query. The `excluded_lrms`
 list is sent in the request body so `visible_lrm_count` and `visible_score_sum` are
 pre-computed server-side.
+
+---
+
+## Visium HD (readers/visium_hd_reader.py)
+
+Space Ranger tiles the capture area with square bins at 2/8/16 µm. There are no
+per-molecule detections — only bin-level UMI counts.
+
+```
+dataset_dir/
+  binned_outputs/
+    square_008um/               ← the bin directories live HERE, not at the top level
+      filtered_feature_bc_matrix.h5
+      spatial/
+        tissue_positions.parquet    barcode, in_tissue, array_row, array_col,
+                                    pxl_row_in_fullres, pxl_col_in_fullres
+        scalefactors_json.json      microns_per_pixel, spot_diameter_fullres,
+                                    bin_size_um, tissue_hires_scalef, …
+        tissue_hires_image.png      morphology — a PNG, not a TIFF
+  spatial/                      the same images again (duplicated into every bin dir too)
+  segmented_outputs/            Space Ranger 4.x: real cell polygons as GeoJSON
+```
+
+Three things about this layout bite:
+
+- **`square_*um/` is nested under `binned_outputs/`.** The detector originally globbed the
+  dataset root, so no genuine Space Ranger output was ever detected.
+- **`tissue_positions.parquet` and `scalefactors_json.json` are per bin.** The top-level
+  `spatial/` folder holds images only.
+- **Morphology is a PNG.** The tile pipeline was TIFF-only; `_SOURCE_EXTS` and
+  `spatial._TIFF_EXTS` now include `.png`, and `_build_dzi_pillow()` handles it when
+  libvips is unavailable (the tifffile fallback cannot open a PNG).
+
+**Bins are served as square polygons.** A bin is literally a square of side
+`spot_diameter_fullres`, so `cell_boundaries()` emits four vertices per bin instead of
+declaring `has_boundaries: False`. This matters because **nothing renders `cells()`
+centroids** — the boundary layers are the only path to drawing a unit — so a points-only
+Visium HD reader would show an empty canvas. Emitting squares makes fill, outline,
+colour-by, picking and region selection all work through the existing layers with no
+frontend change at all.
+
+**Coordinates.** `pxl_col/row_in_fullres` are already full-resolution image pixels, which
+is exactly TissuePlex's contract, so they pass through untouched. `pixel_size` is
+`microns_per_pixel` from the scalefactors and is used only to label distances.
+
+The bundled fixture **cannot catch a missing scalefactor multiply**: it has
+`tissue_hires_scalef = 1.0` and `microns_per_pixel = 1.003`, both effectively identity.
+Real datasets run ~0.02–0.2 and ~0.25. A passing render here is necessary, not sufficient —
+see `sample_data/visium_hd_tiny/PROVENANCE.md`.
+
+Bin selection defaults to `square_008um` (Space Ranger's own analysis default, and
+`spatialdata-io`'s `DEFAULT_BIN`), falling back to the coarsest bin present. `info()`
+reports `bin` and `available_bins`; exposing bin choice in the UI would be the natural
+follow-up, in the shape of the edge-file picker.
 
 ---
 
