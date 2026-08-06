@@ -1,4 +1,280 @@
 {
+  "cosmx-mousebrain": {
+    "bounds_full": {
+      "digest": "cbd01306dc654d43",
+      "keys": [
+        "cell_id",
+        "vertex_x",
+        "vertex_y"
+      ],
+      "n": 927479,
+      "n_cells": 38996,
+      "total": 38996
+    },
+    "bounds_half": {
+      "digest": "82339ef568016f29",
+      "n": 463259,
+      "n_cells": 19498,
+      "total": 38996
+    },
+    "capabilities": {
+      "has_boundaries": true,
+      "has_morphology": false,
+      "has_transcripts": true,
+      "unit_label": "cell"
+    },
+    "cell_detail_0": "dfc08311cfef8ffa",
+    "cell_expression_0": {
+      "digest": "44136fa355b3678a",
+      "n": 0
+    },
+    "cells_all": {
+      "digest": "09f3d77a0f2699d4",
+      "keys": [
+        "Area",
+        "AspectRatio",
+        "Height",
+        "Max.DAPI",
+        "Max.G",
+        "Max.GFAP",
+        "Max.Histone",
+        "Max.rRNA",
+        "Mean.DAPI",
+        "Mean.G",
+        "Mean.GFAP",
+        "Mean.Histone",
+        "Mean.rRNA",
+        "Width",
+        "cell_id",
+        "fov",
+        "x_centroid",
+        "y_centroid"
+      ],
+      "n": 38996
+    },
+    "cells_schema": {
+      "columns": {
+        "Area": "int64",
+        "AspectRatio": "float64",
+        "Height": "int64",
+        "Max.DAPI": "int64",
+        "Max.G": "int64",
+        "Max.GFAP": "int64",
+        "Max.Histone": "int64",
+        "Max.rRNA": "int64",
+        "Mean.DAPI": "int64",
+        "Mean.G": "int64",
+        "Mean.GFAP": "int64",
+        "Mean.Histone": "int64",
+        "Mean.rRNA": "int64",
+        "Width": "int64",
+        "fov": "int64",
+        "x_centroid": "float64",
+        "y_centroid": "float64"
+      }
+    },
+    "color_gene_set": {
+      "digest": "44136fa355b3678a",
+      "max": 0.0,
+      "min": 0.0,
+      "n": 0,
+      "type": "continuous"
+    },
+    "color_meta__fov": {
+      "digest": "da5ef79067c6ce39",
+      "n": 38996,
+      "type": "continuous"
+    },
+    "color_meta__x_centroid": {
+      "digest": "4024b276b97c467c",
+      "n": 38996,
+      "type": "continuous"
+    },
+    "color_meta__y_centroid": {
+      "digest": "c4f0f69c6c783644",
+      "n": 38996,
+      "type": "continuous"
+    },
+    "gene_list": {
+      "digest": "b4a6b682f016cebd",
+      "n": 960
+    },
+    "info_keys": [
+      "path",
+      "pixel_size",
+      "platform"
+    ],
+    "pixel_size": 0.12028,
+    "platform": "cosmx",
+    "tx_bbox": {
+      "digest": "e3b0c44298fc1c14",
+      "n": 0,
+      "total": 0
+    },
+    "tx_bbox_half": {
+      "digest": "e3b0c44298fc1c14",
+      "n": 0,
+      "total": 0
+    },
+    "tx_full": {
+      "digest": "2495367c6620489c",
+      "keys": [
+        "feature_name",
+        "x_location",
+        "y_location"
+      ],
+      "n": 200000,
+      "total": 399999
+    },
+    "tx_gene0": {
+      "digest": "17ff1102f3ee81f9",
+      "keys": [
+        "feature_name",
+        "x_location",
+        "y_location"
+      ],
+      "n": 306,
+      "total": 306
+    }
+  },
+  "merscope-vpt-smallset": {
+    "bounds_full": {
+      "digest": "3be68fb6d19270df",
+      "keys": [
+        "cell_id",
+        "vertex_x",
+        "vertex_y"
+      ],
+      "n": 30451,
+      "n_cells": 918,
+      "total": 918
+    },
+    "bounds_half": {
+      "digest": "e7f4d0b56354cc82",
+      "n": 15045,
+      "n_cells": 459,
+      "total": 918
+    },
+    "capabilities": {
+      "has_boundaries": true,
+      "has_morphology": true,
+      "has_transcripts": true,
+      "unit_label": "cell"
+    },
+    "cell_detail_0": "b9c1a66ce807e6e3",
+    "cell_expression_0": {
+      "digest": "081bc15452bb92cd",
+      "n": 7
+    },
+    "cells_all": {
+      "digest": "a605803feaca7542",
+      "keys": [
+        "anisotropy",
+        "cell_id",
+        "fov",
+        "max_x",
+        "max_y",
+        "min_x",
+        "min_y",
+        "perimeter_area_ratio",
+        "solidity",
+        "transcript_count",
+        "volume",
+        "x_centroid",
+        "y_centroid"
+      ],
+      "n": 997
+    },
+    "cells_schema": {
+      "columns": {
+        "anisotropy": "float64",
+        "fov": "float64",
+        "max_x": "float64",
+        "max_y": "float64",
+        "min_x": "float64",
+        "min_y": "float64",
+        "perimeter_area_ratio": "float64",
+        "solidity": "float64",
+        "transcript_count": "float64",
+        "volume": "float64",
+        "x_centroid": "float64",
+        "y_centroid": "float64"
+      }
+    },
+    "color_gene_set": {
+      "digest": "0082fee906d39bfe",
+      "max": 137.0,
+      "min": 0.0,
+      "n": 997,
+      "type": "continuous"
+    },
+    "color_meta__fov": {
+      "digest": "44136fa355b3678a",
+      "n": 0,
+      "type": "continuous"
+    },
+    "color_meta__volume": {
+      "digest": "0c02197b53e415b0",
+      "n": 997,
+      "type": "continuous"
+    },
+    "color_meta__x_centroid": {
+      "digest": "10073fce6c50adad",
+      "n": 997,
+      "type": "continuous"
+    },
+    "gene_list": {
+      "digest": "ba0a34a6d5631ace",
+      "n": 130
+    },
+    "info_keys": [
+      "has_boundary_file",
+      "pixel_size",
+      "platform"
+    ],
+    "pixel_size": 0.107962,
+    "platform": "merscope",
+    "tx_bbox": {
+      "digest": "febb675b46c5493f",
+      "keys": [
+        "feature_name",
+        "x_location",
+        "y_location"
+      ],
+      "n": 17103,
+      "total": 17103
+    },
+    "tx_bbox_half": {
+      "digest": "f9ad6e07e3ff210d",
+      "keys": [
+        "feature_name",
+        "x_location",
+        "y_location"
+      ],
+      "n": 8552,
+      "total": 17103
+    },
+    "tx_full": {
+      "digest": "60c7df947ed54cb0",
+      "keys": [
+        "feature_name",
+        "x_location",
+        "y_location"
+      ],
+      "n": 62106,
+      "total": 62106
+    },
+    "tx_gene0": {
+      "digest": "da04ab541d13f585",
+      "keys": [
+        "feature_name",
+        "x_location",
+        "y_location"
+      ],
+      "n": 275,
+      "total": 275
+    }
+  },
   "mouse_ileum_tiny": {
     "bounds_full": {
       "digest": "751d82c098ea8c71",
