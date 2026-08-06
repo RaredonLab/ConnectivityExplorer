@@ -8,8 +8,78 @@ export const useStore = create((set, get) => ({
   dataset: null,             // initialized from /spatial/datasets on first load
   activeImage: "morphology", // which OME-TIFF is loaded as the background
 
-  setDataset: (dataset) => set({ dataset, selectedGenes: null, allGenes: [], genesLoaded: false, platformCapabilities: null, categoryColorOverrides: {}, transcriptColorOverrides: {} }),
+  // edgeFile: which edge-source parquet the app renders. "edges.parquet" is the
+  // legacy top-level default; multiple sets live under the dataset's edges/ folder
+  // and are identified as "edges/<name>.parquet" (see issue #46). Applies to all
+  // open viewer panels — the single sidebar drives every panel equally.
+  edgeFile: "edges.parquet",
+
+  // Switching datasets resets all edge-file-scoped state so a stale LRM catalogue,
+  // filter, selection, or color range from the previous dataset never leaks through.
+  // activeImage is cleared too: image names are platform-specific ("morphology" on
+  // Xenium, "Roi1_DAPI" on seqFISH), and DatasetPicker only learns the new dataset's
+  // image list asynchronously. Without this, OSD spends that window requesting the
+  // previous dataset's image from the new one and logging 404s.
+  setDataset: (dataset) => set({
+    dataset, activeImage: null,
+    selectedGenes: null, allGenes: [], genesLoaded: false,
+    platformCapabilities: null, categoryColorOverrides: {}, transcriptColorOverrides: {},
+    edgeFile: "edges.parquet", lrmCatalogue: [], hiddenLrms: new Set(),
+    selectedEdge: null, edgeColorRange: { vmin: null, vmax: null },
+    edgeColorClamp: { low: null, high: null },
+    // Column names are dataset-specific, so a categorical override or an active
+    // filter naming a column the new dataset does not have would either do nothing
+    // or 400 on every viewport change.
+    categoricalOverrides: {}, cellFilter: null, edgeFilter: null,
+  }),
   setActiveImage: (activeImage) => set({ activeImage }),
+
+  // Switching the edge file resets the same edge-scoped state: the LRM catalogue,
+  // hidden-LRM filter, current selection, and auto-computed color range/clamp are
+  // all specific to a given edges.parquet and must be re-derived for the new file.
+  setEdgeFile: (edgeFile) => set({
+    edgeFile, lrmCatalogue: [], hiddenLrms: new Set(), selectedEdge: null,
+    edgeColorRange: { vmin: null, vmax: null }, edgeColorClamp: { low: null, high: null },
+    // The edge filter names a column of the edge table, which differs between
+    // edge sources; the cell filter is unaffected because cells are shared.
+    edgeFilter: null,
+  }),
+
+  // ── Categorical / continuous override (issue #35) ─────────────────────────
+  // Keyed "cell::<field>" / "edge::<field>" → true | false. Absent means
+  // auto-detect, which is what the backend does when `categorical` is null.
+  // Seurat writes cluster IDs as integers, so dtype alone routes them to a
+  // viridis gradient; this is how the user says "these are twenty categories".
+  categoricalOverrides: {},
+  setCategoricalOverride: (scope, field, value) => set((s) => {
+    const next = { ...s.categoricalOverrides };
+    if (value === null || value === undefined) delete next[`${scope}::${field}`];
+    else next[`${scope}::${field}`] = value;
+    return { categoricalOverrides: next };
+  }),
+
+  // ── Metadata subsetting (issue #45) ───────────────────────────────────────
+  // A filter is { field, values: string[] | null, min, max, includeMissing }.
+  // null means no filter. `values` is a categorical allowlist; min/max an
+  // inclusive numeric range. Applied server-side before sampling, so narrowing
+  // to a rare cluster shows all of it rather than a sample of a sample.
+  //
+  // cellFilter also governs edges: an edge is drawn only when BOTH endpoints
+  // survive it. edgeFilter is independent and applies to the edge table itself.
+  cellFilter: null,
+  setCellFilter: (f) => set({ cellFilter: f }),
+  edgeFilter: null,
+  setEdgeFilter: (f) => set({ edgeFilter: f }),
+
+  // Resolved type of the active cell color-by column, reported by panel 0 so the
+  // LayerPanel can render the matching legend. The panel used to guess from the
+  // schema dtype, which disagreed with the backend for low-cardinality integers:
+  // the canvas drew discrete colors while the panel showed a gradient with two
+  // sliders that did nothing.
+  cellColorType: "continuous",
+  cellColorCategories: [],
+  setCellColorType: (type, categories) =>
+    set({ cellColorType: type, cellColorCategories: categories ?? [] }),
 
   // ── Platform capabilities (fetched from /spatial/{dataset}/info) ──────────
   // null = not yet loaded; object = { has_morphology, has_transcripts, has_boundaries, unit_label }
@@ -270,3 +340,6 @@ export const useStore = create((set, get) => ({
       return { selectedGenes: next };
     }),
 }));
+
+// Dev-only handle for debugging from the browser console.
+if (typeof window !== "undefined" && import.meta.env?.DEV) window.__tpStore = useStore;

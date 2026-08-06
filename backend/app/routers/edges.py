@@ -20,6 +20,7 @@ import os
 from typing import Optional, List
 
 from app.readers.edge_reader import EdgeReader
+from app.readers.metadata_filter import MetadataFilter
 
 router = APIRouter()
 
@@ -37,7 +38,15 @@ def _reader(dataset: str, edge_file: str = "edges.parquet") -> EdgeReader:
     path = DATA_ROOT / dataset
     if not path.exists():
         raise HTTPException(404, f"Dataset '{dataset}' not found")
-    edge_path = path / edge_file
+    # edge_file may be a plain filename ("edges.parquet") or a relative sub-path
+    # inside the dataset ("edges/edge.raw.minimum.parquet"). Resolve it and confirm
+    # it stays within the dataset folder — guards against path traversal ("../..").
+    dataset_root = path.resolve()
+    edge_path = (path / edge_file).resolve()
+    try:
+        edge_path.relative_to(dataset_root)
+    except ValueError:
+        raise HTTPException(400, f"Invalid edge file path '{edge_file}'")
     if not edge_path.exists():
         raise HTTPException(404, f"Edge file '{edge_file}' not found in dataset '{dataset}'")
     # Resolve pixel_size from the spatial reader so coordinate conversion is
@@ -101,12 +110,56 @@ def query_edges(
 
 @router.get("/{dataset}/files")
 def list_edge_files(dataset: str):
-    """List all .parquet files in the dataset folder that can be used as edge sources."""
+    """
+    List the edge-source parquet files available for a dataset.
+
+    Discovery is deliberately scoped so it never picks up cells / transcripts /
+    boundary parquet files that live at the top level of the dataset:
+      1. The legacy top-level ``edges.parquet`` (if present) — listed first so it
+         remains the default; keeps single-file datasets working unchanged.
+      2. Every ``*.parquet`` inside the dedicated ``edges/`` subfolder — the place
+         users drop multiple pre-computed edge sets (see issue #46).
+
+    Each returned entry is an identifier that can be passed straight back as the
+    ``edge_file`` query param. ``label`` is a display name (folder + ``.parquet``
+    stripped). ``default`` names the identifier the frontend should select first.
+    """
     path = DATA_ROOT / dataset
     if not path.exists():
         raise HTTPException(404, f"Dataset '{dataset}' not found")
-    parquet_files = [f.name for f in path.glob("*.parquet")]
-    return {"files": parquet_files}
+
+    files: list[dict] = []
+    # Legacy top-level file first (stable default for existing datasets).
+    legacy = path / "edges.parquet"
+    if legacy.exists():
+        files.append({"id": "edges.parquet", "label": "edges"})
+    # Additional edge sets in the dedicated subfolder, sorted for stable ordering.
+    edges_dir = path / "edges"
+    if edges_dir.is_dir():
+        for f in sorted(edges_dir.glob("*.parquet")):
+            files.append({"id": f"edges/{f.name}", "label": f.stem})
+
+    default = files[0]["id"] if files else "edges.parquet"
+    return {"files": files, "default": default}
+
+
+class MetadataFilterSpec(BaseModel):
+    """A metadata restriction (issue #45), for either the cell or the edge table.
+
+    `values` is a categorical allowlist; `min`/`max` an inclusive numeric range.
+    Sending a field with neither is not an error — it means the user has picked a
+    column but not yet narrowed it, and everything is returned.
+    """
+    field: Optional[str] = None
+    values: Optional[List[str]] = None
+    min: Optional[float] = None
+    max: Optional[float] = None
+    include_missing: bool = False
+
+    def build(self) -> Optional[MetadataFilter]:
+        return MetadataFilter.build(
+            self.field, self.values, self.min, self.max, self.include_missing
+        )
 
 
 class EdgeGroupedQueryRequest(BaseModel):
@@ -116,6 +169,29 @@ class EdgeGroupedQueryRequest(BaseModel):
     ymax: Optional[float] = None
     min_strength: Optional[float] = None
     density: float = 1.0   # fraction of viewport edges to return (0.01–1.0)
+    # cell_filter restricts by *cell* metadata: an edge survives only if both of
+    # its endpoints do. edge_filter restricts by a column of the edge table itself
+    # (or of edge-metadata/). They compose.
+    cell_filter: Optional[MetadataFilterSpec] = None
+    edge_filter: Optional[MetadataFilterSpec] = None
+
+
+def _cell_ids_for(dataset: str, spec: Optional[MetadataFilterSpec]) -> Optional[set]:
+    """Resolve a cell-metadata filter through the *spatial* reader.
+
+    The edge router has no cells table of its own, so it borrows the platform
+    reader — which is also what keeps the cell-id vocabulary identical on both
+    sides, the same assumption `edges.parquet` already makes when it stores
+    barcodes in `sending_cell`.
+    """
+    built = spec.build() if spec else None
+    if built is None:
+        return None
+    from app.routers import spatial
+    try:
+        return spatial._reader(dataset).filter_cell_ids(built)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
 
 
 @router.post("/{dataset}/query-grouped")
@@ -130,10 +206,15 @@ def query_edges_grouped(dataset: str, body: EdgeGroupedQueryRequest,
     bbox = (body.xmin, body.ymin, body.xmax, body.ymax) \
         if body.xmin is not None else None
     density = max(0.001, min(1.0, body.density))
-    return _reader(dataset, edge_file).query_grouped(
-        bbox=bbox,
-        density=density,
-    )
+    try:
+        return _reader(dataset, edge_file).query_grouped(
+            bbox=bbox,
+            density=density,
+            cell_ids=_cell_ids_for(dataset, body.cell_filter),
+            edge_filter=body.edge_filter.build() if body.edge_filter else None,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
 
 
 class EdgeScoreQueryRequest(BaseModel):
@@ -175,6 +256,8 @@ class EdgeColorRequest(BaseModel):
     mode: str                        # "lrm_set" | "metadata"
     lrms: Optional[List[str]] = None # for lrm_set: list of "ligand|receptor" strings
     field: Optional[str] = None      # for metadata: column name
+    # None = auto-detect; True/False force the interpretation (issue #35).
+    categorical: Optional[bool] = None
 
 
 @router.post("/{dataset}/edge-color-values")
@@ -183,9 +266,12 @@ def edge_color_values(dataset: str, body: EdgeColorRequest,
     """
     Return per-directed-edge color values.
     lrm_set: sum score for the supplied LRM list, one value per edge.
-    metadata: return first value of `field` per edge (auto-detects cat/continuous).
+    metadata: return first value of `field` per edge (auto-detects cat/continuous
+    unless `categorical` overrides it).
     """
-    return _reader(dataset, edge_file).edge_color_values(body.mode, body.lrms, body.field)
+    return _reader(dataset, edge_file).edge_color_values(
+        body.mode, body.lrms, body.field, body.categorical
+    )
 
 
 @router.get("/{dataset}/edge/{edge_id:path}")

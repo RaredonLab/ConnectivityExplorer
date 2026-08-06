@@ -11,7 +11,9 @@ export default defineConfig({
   },
   plugins: [react()],
   server: {
-    port: 3000,
+    // 5173, not 3000: docker compose binds 3000 for the production frontend, so a
+    // default of 3000 made `npm run dev` collide with a running container.
+    port: 5173,
     proxy: {
       "/api": {
         target: "http://localhost:8000",

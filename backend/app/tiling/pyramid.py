@@ -25,6 +25,10 @@ TILE_FORMAT = "jpeg"
 JPEG_QUALITY = 85
 DZI_CACHE_SUBDIR = ".dzi_cache"
 
+# Extensions _find_source resolves, kept in step with spatial.list_images. PNG is
+# included because Visium HD's morphology is tissue_hires_image.png, not a TIFF.
+_SOURCE_EXTS = (".ome.tif", ".ome.tiff", ".tif", ".tiff", ".png")
+
 _CACHE_DIR = os.getenv("CACHE_DIR")  # None → write alongside the data
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -45,6 +49,49 @@ def ensure_pyramid(dataset_path: Path, image_name: str) -> dict:
     try:
         out_dir.mkdir(parents=True, exist_ok=True)
         _build_dzi(src, out_dir, image_name)
+        return {"status": "ready", "path": str(dzi_file)}
+    except Exception as exc:
+        shutil.rmtree(out_dir, ignore_errors=True)
+        return {"status": "error", "message": str(exc)}
+
+
+# Reserved image name for datasets with no morphology of their own. The viewer
+# takes its coordinate space from the tile pyramid, so a dataset without an image
+# would render nothing at all — this gives deck.gl a canvas to draw onto.
+BLANK_IMAGE_NAME = "__blank__"
+
+# Uniform fill for that canvas: dark enough that cell outlines and edges read
+# against it, light enough to distinguish from empty viewer background.
+_BLANK_LEVEL = 26
+
+
+def ensure_blank_pyramid(dataset_path: Path, width: int, height: int) -> dict:
+    """Create a placeholder pyramid of the given size, if not already cached.
+
+    No tiles are generated. A blank pyramid is uniform, so one 256×256 tile is
+    written and `get_tile_path` returns it for every level/column/row. At CosMx
+    scale — roughly 47000 × 25000 px — materialising real tiles would mean tens
+    of thousands of identical files for no benefit.
+    """
+    width = max(1, int(width))
+    height = max(1, int(height))
+    out_dir = _pyramid_root(dataset_path, BLANK_IMAGE_NAME)
+    dzi_file = out_dir / f"{BLANK_IMAGE_NAME}.dzi"
+    tile = out_dir / "blank_tile.jpeg"
+
+    if dzi_file.exists() and tile.exists():
+        try:
+            d = get_dzi_descriptor(dataset_path, BLANK_IMAGE_NAME)
+            if (d["Size"]["Width"], d["Size"]["Height"]) == (width, height):
+                return {"status": "ready", "path": str(dzi_file)}
+        except Exception:
+            pass  # stale or unreadable → rewrite below
+
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        Image.new("L", (TILE_SIZE, TILE_SIZE), _BLANK_LEVEL).save(
+            tile, quality=JPEG_QUALITY)
+        _write_dzi_xml(out_dir, BLANK_IMAGE_NAME, width, height)
         return {"status": "ready", "path": str(dzi_file)}
     except Exception as exc:
         shutil.rmtree(out_dir, ignore_errors=True)
@@ -78,6 +125,10 @@ def get_dzi_descriptor(dataset_path: Path, image_name: str) -> dict:
 def get_tile_path(
     dataset_path: Path, image_name: str, level: int, col: int, row: int, fmt: str
 ) -> Optional[Path]:
+    if image_name == BLANK_IMAGE_NAME:
+        # One uniform tile answers every request; see ensure_blank_pyramid.
+        tile = _pyramid_root(dataset_path, BLANK_IMAGE_NAME) / "blank_tile.jpeg"
+        return tile if tile.exists() else None
     tile = (
         _pyramid_root(dataset_path, image_name)
         / f"{image_name}_files"
@@ -109,7 +160,23 @@ def _build_dzi(src: Path, out_dir: Path, image_name: str) -> None:
                     shutil.rmtree(item, ignore_errors=True)
                 else:
                     item.unlink(missing_ok=True)
+    # The tifffile fallback can only open TIFFs. Visium HD's morphology is a PNG,
+    # so ordinary raster formats get a Pillow path instead — otherwise a machine
+    # without libvips could list the image but never build its pyramid.
+    if src.suffix.lower() in (".png", ".jpg", ".jpeg"):
+        _build_dzi_pillow(src, out_dir, image_name)
+        return
     _build_dzi_tifffile(src, out_dir, image_name)
+
+
+def _build_dzi_pillow(src: Path, out_dir: Path, image_name: str) -> None:
+    """Build a DZI from an ordinary raster image (PNG/JPEG) with Pillow alone."""
+    # Visium HD hires images are ~6000x5400, comfortably loadable; but Pillow's
+    # decompression-bomb guard trips well below that, so raise it deliberately.
+    Image.MAX_IMAGE_PIXELS = None
+    with Image.open(src) as im:
+        full = im.convert("L")
+    _write_pyramid_from_image(full, out_dir, image_name)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -299,6 +366,38 @@ def _to_uint8(arr: np.ndarray, lo: float, hi: float) -> np.ndarray:
     return ((clipped - lo) / (hi - lo) * 255).astype(np.uint8)
 
 
+def _write_pyramid_from_image(full: "Image.Image", out_dir: Path, image_name: str) -> None:
+    """Write a complete DZI tile pyramid from a single in-memory Pillow image.
+
+    Used by the PNG/JPEG fallback, where the source has no embedded pyramid and
+    every level is produced by successive downscaling.
+    """
+    full_w, full_h = full.size
+    max_dzi_level = math.ceil(math.log2(max(full_w, full_h, 1)))
+    tiles_root = out_dir / f"{image_name}_files"
+
+    for dzi_level in range(max_dzi_level + 1):
+        level_w = max(1, math.ceil(full_w / 2 ** (max_dzi_level - dzi_level)))
+        level_h = max(1, math.ceil(full_h / 2 ** (max_dzi_level - dzi_level)))
+        lvl_img = (full if (level_w, level_h) == (full_w, full_h)
+                   else full.resize((level_w, level_h), Image.LANCZOS))
+
+        level_dir = tiles_root / str(dzi_level)
+        level_dir.mkdir(parents=True, exist_ok=True)
+        for row in range(math.ceil(level_h / TILE_SIZE)):
+            for col in range(math.ceil(level_w / TILE_SIZE)):
+                x0 = max(col * TILE_SIZE - (OVERLAP if col > 0 else 0), 0)
+                y0 = max(row * TILE_SIZE - (OVERLAP if row > 0 else 0), 0)
+                x1 = min(x0 + TILE_SIZE + OVERLAP * 2, level_w)
+                y1 = min(y0 + TILE_SIZE + OVERLAP * 2, level_h)
+                lvl_img.crop((x0, y0, x1, y1)).save(
+                    level_dir / f"{col}_{row}.{TILE_FORMAT}", quality=JPEG_QUALITY)
+        if lvl_img is not full:
+            del lvl_img
+
+    _write_dzi_xml(out_dir, image_name, full_w, full_h)
+
+
 def _write_dzi_xml(out_dir: Path, image_name: str, width: int, height: int) -> None:
     dzi_xml = (
         f'<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -321,8 +420,21 @@ def _pyramid_root(dataset_path: Path, image_name: str) -> Path:
 
 
 def _find_source(dataset_path: Path, image_name: str) -> Optional[Path]:
-    for ext in (".ome.tif", ".ome.tiff", ".tif", ".tiff"):
+    """Resolve an image stem from /spatial/{dataset}/images back to a file path.
+
+    Searches the dataset root first, then one level of subdirectories, so
+    multi-channel sets such as Xenium's ``morphology_focus/`` resolve. The
+    root-first order matches ``spatial.list_images`` so a stem that exists in
+    both places always resolves to the same file the picker listed.
+    """
+    for ext in _SOURCE_EXTS:
         candidate = dataset_path / f"{image_name}{ext}"
         if candidate.exists():
             return candidate
+    for ext in _SOURCE_EXTS:
+        for subdir in sorted(dataset_path.iterdir()):
+            if subdir.is_dir() and not subdir.name.startswith("."):
+                candidate = subdir / f"{image_name}{ext}"
+                if candidate.exists():
+                    return candidate
     return None

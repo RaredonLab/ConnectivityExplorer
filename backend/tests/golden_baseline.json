@@ -1,0 +1,1557 @@
+{
+  "cosmx-mousebrain": {
+    "bounds_full": {
+      "digest": "c363de1ca5bf55b9",
+      "keys": [
+        "cell_id",
+        "vertex_x",
+        "vertex_y"
+      ],
+      "n": 927479,
+      "n_cells": 38996,
+      "total": 38996
+    },
+    "bounds_half": {
+      "digest": "066cd5973aea3da9",
+      "n": 463259,
+      "n_cells": 19498,
+      "total": 38996
+    },
+    "capabilities": {
+      "has_boundaries": true,
+      "has_morphology": false,
+      "has_transcripts": true,
+      "unit_label": "cell"
+    },
+    "cell_detail_0": "35b7eded5f63108f",
+    "cell_expression_0": {
+      "digest": "44136fa355b3678a",
+      "n": 0
+    },
+    "cells_all": {
+      "digest": "618f051bcb92242e",
+      "keys": [
+        "Area",
+        "AspectRatio",
+        "Height",
+        "Max.DAPI",
+        "Max.G",
+        "Max.GFAP",
+        "Max.Histone",
+        "Max.rRNA",
+        "Mean.DAPI",
+        "Mean.G",
+        "Mean.GFAP",
+        "Mean.Histone",
+        "Mean.rRNA",
+        "Width",
+        "cell_id",
+        "fov",
+        "x_centroid",
+        "y_centroid"
+      ],
+      "n": 38996
+    },
+    "cells_schema": {
+      "columns": {
+        "Area": "int64",
+        "AspectRatio": "float64",
+        "Height": "int64",
+        "Max.DAPI": "int64",
+        "Max.G": "int64",
+        "Max.GFAP": "int64",
+        "Max.Histone": "int64",
+        "Max.rRNA": "int64",
+        "Mean.DAPI": "int64",
+        "Mean.G": "int64",
+        "Mean.GFAP": "int64",
+        "Mean.Histone": "int64",
+        "Mean.rRNA": "int64",
+        "Width": "int64",
+        "fov": "int64",
+        "x_centroid": "float64",
+        "y_centroid": "float64"
+      }
+    },
+    "color_forced_cat__fov": {
+      "categories_digest": "5d0026d09770336c",
+      "digest": "8e360a57101220c4",
+      "n": 38996,
+      "n_categories": 66,
+      "type": "categorical"
+    },
+    "color_gene_set": {
+      "digest": "44136fa355b3678a",
+      "max": 0.0,
+      "min": 0.0,
+      "n": 0,
+      "type": "continuous"
+    },
+    "color_meta__fov": {
+      "digest": "da5ef79067c6ce39",
+      "n": 38996,
+      "type": "continuous"
+    },
+    "color_meta__x_centroid": {
+      "digest": "22c81b9c2e83431d",
+      "n": 38996,
+      "type": "continuous"
+    },
+    "color_meta__y_centroid": {
+      "digest": "1da6b332f5e24203",
+      "n": 38996,
+      "type": "continuous"
+    },
+    "gene_list": {
+      "digest": "b4a6b682f016cebd",
+      "n": 960
+    },
+    "info_keys": [
+      "path",
+      "pixel_size",
+      "platform"
+    ],
+    "pixel_size": 0.12028,
+    "platform": "cosmx",
+    "tx_bbox": {
+      "digest": "e3b0c44298fc1c14",
+      "n": 0,
+      "total": 0
+    },
+    "tx_bbox_half": {
+      "digest": "e3b0c44298fc1c14",
+      "n": 0,
+      "total": 0
+    },
+    "tx_full": {
+      "digest": "b76ab16b6333ead5",
+      "keys": [
+        "feature_name",
+        "x_location",
+        "y_location"
+      ],
+      "n": 200000,
+      "total": 399999
+    },
+    "tx_gene0": {
+      "digest": "8ff8b70a44b339a1",
+      "keys": [
+        "feature_name",
+        "x_location",
+        "y_location"
+      ],
+      "n": 306,
+      "total": 306
+    }
+  },
+  "merscope-vpt-smallset": {
+    "bounds_full": {
+      "digest": "3be68fb6d19270df",
+      "keys": [
+        "cell_id",
+        "vertex_x",
+        "vertex_y"
+      ],
+      "n": 30451,
+      "n_cells": 918,
+      "total": 918
+    },
+    "bounds_half": {
+      "digest": "e7f4d0b56354cc82",
+      "n": 15045,
+      "n_cells": 459,
+      "total": 918
+    },
+    "capabilities": {
+      "has_boundaries": true,
+      "has_morphology": true,
+      "has_transcripts": true,
+      "unit_label": "cell"
+    },
+    "cell_detail_0": "b9c1a66ce807e6e3",
+    "cell_expression_0": {
+      "digest": "081bc15452bb92cd",
+      "n": 7
+    },
+    "cells_all": {
+      "digest": "a605803feaca7542",
+      "keys": [
+        "anisotropy",
+        "cell_id",
+        "fov",
+        "max_x",
+        "max_y",
+        "min_x",
+        "min_y",
+        "perimeter_area_ratio",
+        "solidity",
+        "transcript_count",
+        "volume",
+        "x_centroid",
+        "y_centroid"
+      ],
+      "n": 997
+    },
+    "cells_schema": {
+      "columns": {
+        "anisotropy": "float64",
+        "fov": "float64",
+        "max_x": "float64",
+        "max_y": "float64",
+        "min_x": "float64",
+        "min_y": "float64",
+        "perimeter_area_ratio": "float64",
+        "solidity": "float64",
+        "transcript_count": "float64",
+        "volume": "float64",
+        "x_centroid": "float64",
+        "y_centroid": "float64"
+      }
+    },
+    "color_forced_cat__volume": {
+      "categories_digest": "5184d74a79a96f9b",
+      "digest": "09e3b3fcdf575db2",
+      "n": 997,
+      "n_categories": 995,
+      "type": "categorical"
+    },
+    "color_gene_set": {
+      "digest": "0082fee906d39bfe",
+      "max": 137.0,
+      "min": 0.0,
+      "n": 997,
+      "type": "continuous"
+    },
+    "color_meta__fov": {
+      "digest": "44136fa355b3678a",
+      "n": 0,
+      "type": "continuous"
+    },
+    "color_meta__volume": {
+      "digest": "0c02197b53e415b0",
+      "n": 997,
+      "type": "continuous"
+    },
+    "color_meta__x_centroid": {
+      "digest": "10073fce6c50adad",
+      "n": 997,
+      "type": "continuous"
+    },
+    "gene_list": {
+      "digest": "ba0a34a6d5631ace",
+      "n": 130
+    },
+    "info_keys": [
+      "has_boundary_file",
+      "pixel_size",
+      "platform"
+    ],
+    "pixel_size": 0.107962,
+    "platform": "merscope",
+    "tx_bbox": {
+      "digest": "febb675b46c5493f",
+      "keys": [
+        "feature_name",
+        "x_location",
+        "y_location"
+      ],
+      "n": 17103,
+      "total": 17103
+    },
+    "tx_bbox_half": {
+      "digest": "f9ad6e07e3ff210d",
+      "keys": [
+        "feature_name",
+        "x_location",
+        "y_location"
+      ],
+      "n": 8552,
+      "total": 17103
+    },
+    "tx_full": {
+      "digest": "60c7df947ed54cb0",
+      "keys": [
+        "feature_name",
+        "x_location",
+        "y_location"
+      ],
+      "n": 62106,
+      "total": 62106
+    },
+    "tx_gene0": {
+      "digest": "da04ab541d13f585",
+      "keys": [
+        "feature_name",
+        "x_location",
+        "y_location"
+      ],
+      "n": 275,
+      "total": 275
+    }
+  },
+  "mouse_ileum_tiny": {
+    "bounds_full": {
+      "digest": "751d82c098ea8c71",
+      "keys": [
+        "cell_id",
+        "vertex_x",
+        "vertex_y"
+      ],
+      "n": 900,
+      "n_cells": 36,
+      "total": 36
+    },
+    "bounds_half": {
+      "digest": "12202c48c61571a9",
+      "n": 450,
+      "n_cells": 18,
+      "total": 36
+    },
+    "capabilities": {
+      "has_boundaries": true,
+      "has_morphology": true,
+      "has_transcripts": true,
+      "unit_label": "cell"
+    },
+    "cell_detail_0": "9f848959f6710dd8",
+    "cell_expression_0": {
+      "digest": "e4e6708c3bf53c95",
+      "n": 3
+    },
+    "cells_all": {
+      "digest": "61dc45819d71ad01",
+      "keys": [
+        "cell_area",
+        "cell_id",
+        "control_codeword_counts",
+        "control_probe_counts",
+        "deprecated_codeword_counts",
+        "genomic_control_counts",
+        "nucleus_area",
+        "nucleus_count",
+        "segmentation_method",
+        "total_counts",
+        "transcript_counts",
+        "unassigned_codeword_counts",
+        "x_centroid",
+        "y_centroid"
+      ],
+      "n": 36
+    },
+    "cells_schema": {
+      "columns": {
+        "cell_area": "float64",
+        "cluster": "int64",
+        "control_codeword_counts": "int64",
+        "control_probe_counts": "int64",
+        "deprecated_codeword_counts": "int64",
+        "genomic_control_counts": "int64",
+        "nucleus_area": "float64",
+        "nucleus_count": "int64",
+        "pseudotime": "float64",
+        "region": "object",
+        "segmentation_method": "object",
+        "seurat_clusters": "int64",
+        "total_counts": "int64",
+        "transcript_counts": "int64",
+        "unassigned_codeword_counts": "int64",
+        "x_centroid": "float64",
+        "y_centroid": "float64"
+      }
+    },
+    "color_forced_cat__cell_area": {
+      "categories_digest": "03d5cb572a029c51",
+      "digest": "399d4c4dcd1753c0",
+      "n": 36,
+      "n_categories": 36,
+      "type": "categorical"
+    },
+    "color_forced_cont__transcript_counts": {
+      "categories_digest": null,
+      "digest": "0fd6f76f73a915d2",
+      "n": 36,
+      "n_categories": null,
+      "type": "continuous"
+    },
+    "color_gene_set": {
+      "digest": "dc12ce5b5034d05e",
+      "max": 1.0,
+      "min": 0.0,
+      "n": 36,
+      "type": "continuous"
+    },
+    "color_meta__transcript_counts": {
+      "digest": "5d8ffb43c4670f47",
+      "n": 36,
+      "type": "categorical"
+    },
+    "color_meta__x_centroid": {
+      "digest": "a8cef95f5f41c61d",
+      "n": 36,
+      "type": "continuous"
+    },
+    "color_meta__y_centroid": {
+      "digest": "d359977cedf42c6a",
+      "n": 36,
+      "type": "continuous"
+    },
+    "edge__edges.parquet__catalogue": {
+      "digest": "556c70f23429ddd8",
+      "n": 20
+    },
+    "edge__edges.parquet__color_lrm": {
+      "digest": "c92dc2b2c78706bf"
+    },
+    "edge__edges.parquet__detail0": "b5b16c6db1ee824b",
+    "edge__edges.parquet__filter__interaction_class": {
+      "digest": "868bc3eaf596bf9c",
+      "keys": [
+        "edge",
+        "is_autocrine",
+        "lrm_count",
+        "receiving_cell",
+        "receiving_type",
+        "score_sum",
+        "sending_cell",
+        "sending_type",
+        "x1",
+        "x2",
+        "y1",
+        "y2"
+      ],
+      "n": 176
+    },
+    "edge__edges.parquet__grouped": {
+      "digest": "74439cac91762e89",
+      "keys": [
+        "edge",
+        "is_autocrine",
+        "lrm_count",
+        "receiving_cell",
+        "receiving_type",
+        "score_sum",
+        "sending_cell",
+        "sending_type",
+        "x1",
+        "x2",
+        "y1",
+        "y2"
+      ],
+      "n": 223
+    },
+    "edge__edges.parquet__schema": {
+      "columns": {
+        "confidence": "float64",
+        "edge": "string",
+        "interaction_class": "object",
+        "is_autocrine": "bool",
+        "ligand": "string",
+        "lrm": "string",
+        "lrm_id": "int64",
+        "receiving_cell": "string",
+        "receiving_type": "string",
+        "receptor": "string",
+        "reviewed": "object",
+        "score": "double",
+        "score_norm": "double",
+        "sending_cell": "string",
+        "sending_type": "string",
+        "x1": "double",
+        "x2": "double",
+        "y1": "double",
+        "y2": "double"
+      }
+    },
+    "edge__edges.parquet__scores": {
+      "digest": "17a091898e2af2fb",
+      "keys": [
+        "edge",
+        "visible_lrm_count",
+        "visible_score_sum"
+      ],
+      "n": 223
+    },
+    "edge__edges__edge.normalized.product.parquet__catalogue": {
+      "digest": "556c70f23429ddd8",
+      "n": 20
+    },
+    "edge__edges__edge.normalized.product.parquet__color_lrm": {
+      "digest": "519a5ef75304e432"
+    },
+    "edge__edges__edge.normalized.product.parquet__detail0": "e5a6e867ae7774fa",
+    "edge__edges__edge.normalized.product.parquet__filter__interaction_class": {
+      "digest": "7106481dad64d458",
+      "keys": [
+        "edge",
+        "is_autocrine",
+        "lrm_count",
+        "receiving_cell",
+        "receiving_type",
+        "score_sum",
+        "sending_cell",
+        "sending_type",
+        "x1",
+        "x2",
+        "y1",
+        "y2"
+      ],
+      "n": 176
+    },
+    "edge__edges__edge.normalized.product.parquet__grouped": {
+      "digest": "60404aba71d2d61d",
+      "keys": [
+        "edge",
+        "is_autocrine",
+        "lrm_count",
+        "receiving_cell",
+        "receiving_type",
+        "score_sum",
+        "sending_cell",
+        "sending_type",
+        "x1",
+        "x2",
+        "y1",
+        "y2"
+      ],
+      "n": 289
+    },
+    "edge__edges__edge.normalized.product.parquet__schema": {
+      "columns": {
+        "confidence": "float64",
+        "edge": "string",
+        "interaction_class": "object",
+        "is_autocrine": "bool",
+        "ligand": "string",
+        "lrm": "string",
+        "lrm_id": "int64",
+        "receiving_cell": "string",
+        "receiving_type": "string",
+        "receptor": "string",
+        "reviewed": "object",
+        "score": "double",
+        "score_norm": "double",
+        "sending_cell": "string",
+        "sending_type": "string",
+        "x1": "double",
+        "x2": "double",
+        "y1": "double",
+        "y2": "double"
+      }
+    },
+    "edge__edges__edge.normalized.product.parquet__scores": {
+      "digest": "83337511682a043f",
+      "keys": [
+        "edge",
+        "visible_lrm_count",
+        "visible_score_sum"
+      ],
+      "n": 289
+    },
+    "edge__edges__edge.raw.minimum.parquet__catalogue": {
+      "digest": "556c70f23429ddd8",
+      "n": 20
+    },
+    "edge__edges__edge.raw.minimum.parquet__color_lrm": {
+      "digest": "ea178fdb2da7ef01"
+    },
+    "edge__edges__edge.raw.minimum.parquet__detail0": "1653c7e83d4142bd",
+    "edge__edges__edge.raw.minimum.parquet__filter__interaction_class": {
+      "digest": "46e42445db77b41e",
+      "keys": [
+        "edge",
+        "is_autocrine",
+        "lrm_count",
+        "receiving_cell",
+        "receiving_type",
+        "score_sum",
+        "sending_cell",
+        "sending_type",
+        "x1",
+        "x2",
+        "y1",
+        "y2"
+      ],
+      "n": 113
+    },
+    "edge__edges__edge.raw.minimum.parquet__grouped": {
+      "digest": "ba6b68c6da29e63c",
+      "keys": [
+        "edge",
+        "is_autocrine",
+        "lrm_count",
+        "receiving_cell",
+        "receiving_type",
+        "score_sum",
+        "sending_cell",
+        "sending_type",
+        "x1",
+        "x2",
+        "y1",
+        "y2"
+      ],
+      "n": 155
+    },
+    "edge__edges__edge.raw.minimum.parquet__schema": {
+      "columns": {
+        "confidence": "float64",
+        "edge": "string",
+        "interaction_class": "object",
+        "is_autocrine": "bool",
+        "ligand": "string",
+        "lrm": "string",
+        "lrm_id": "int64",
+        "receiving_cell": "string",
+        "receiving_type": "string",
+        "receptor": "string",
+        "reviewed": "object",
+        "score": "double",
+        "score_norm": "double",
+        "sending_cell": "string",
+        "sending_type": "string",
+        "x1": "double",
+        "x2": "double",
+        "y1": "double",
+        "y2": "double"
+      }
+    },
+    "edge__edges__edge.raw.minimum.parquet__scores": {
+      "digest": "99276f997c4867c5",
+      "keys": [
+        "edge",
+        "visible_lrm_count",
+        "visible_score_sum"
+      ],
+      "n": 155
+    },
+    "filter_bounds__transcript_counts": {
+      "n_cells": 19,
+      "total": 19
+    },
+    "filter_ids__transcript_counts": 19,
+    "gene_list": {
+      "digest": "09d44724709d2b24",
+      "n": 5035
+    },
+    "info_keys": [
+      "analysis_sw_version",
+      "analysis_uuid",
+      "calibration_uuid",
+      "cassette_name",
+      "cassette_uuid",
+      "chemistry_version",
+      "experiment_uuid",
+      "fraction_transcripts_assigned",
+      "images",
+      "imported_cell_frac",
+      "instrument_sn",
+      "instrument_sw_version",
+      "major_version",
+      "minor_version",
+      "nuclear_transcripts_per_100um",
+      "num_cells",
+      "panel_design_id",
+      "panel_name",
+      "panel_num_targets_custom",
+      "panel_num_targets_predesigned",
+      "panel_organism",
+      "panel_predesigned_id",
+      "panel_tissue_type",
+      "panel_type",
+      "patch_version",
+      "pixel_size",
+      "platform",
+      "preservation_method",
+      "region_area",
+      "region_name",
+      "roi_uuid",
+      "run_name",
+      "run_start_time",
+      "segmentation_stain",
+      "segmented_cell_boundary_frac",
+      "segmented_cell_interior_frac",
+      "segmented_cell_nuc_expansion_frac",
+      "segmented_cell_stain_frac",
+      "slide_id",
+      "thickness_of_high_quality_decoded_transcripts",
+      "total_cell_area",
+      "transcripts_per_100um",
+      "transcripts_per_cell",
+      "well_uuid",
+      "xenium_explorer_files",
+      "z_step_size"
+    ],
+    "pixel_size": 0.2125,
+    "platform": "xenium",
+    "tx_bbox": {
+      "digest": "84b62ff069bb9014",
+      "keys": [
+        "feature_name",
+        "qv",
+        "x_location",
+        "y_location"
+      ],
+      "n": 602,
+      "total": 602
+    },
+    "tx_bbox_half": {
+      "digest": "e8f25ce5cb6b26b7",
+      "keys": [
+        "feature_name",
+        "qv",
+        "x_location",
+        "y_location"
+      ],
+      "n": 301,
+      "total": 602
+    },
+    "tx_full": {
+      "digest": "3bea25b8419eb09f",
+      "keys": [
+        "feature_name",
+        "qv",
+        "x_location",
+        "y_location"
+      ],
+      "n": 1985,
+      "total": 1985
+    },
+    "tx_gene0": {
+      "digest": "e3b0c44298fc1c14",
+      "n": 0,
+      "total": 0
+    }
+  },
+  "seqfish_instrument2": {
+    "bounds_full": {
+      "digest": "e93a1e7b407a17dc",
+      "keys": [
+        "cell_id",
+        "vertex_x",
+        "vertex_y"
+      ],
+      "n": 1147,
+      "n_cells": 62,
+      "total": 62
+    },
+    "bounds_half": {
+      "digest": "00324d9f4a380a13",
+      "n": 576,
+      "n_cells": 31,
+      "total": 62
+    },
+    "capabilities": {
+      "has_boundaries": true,
+      "has_morphology": true,
+      "has_transcripts": true,
+      "unit_label": "cell"
+    },
+    "cell_detail_0": "178c5b055b70bf72",
+    "cell_expression_0": {
+      "digest": "cb42bde899c5553c",
+      "n": 12
+    },
+    "cells_all": {
+      "digest": "20ddf74e79b6dafb",
+      "keys": [
+        "cell_area",
+        "cell_id",
+        "x_centroid",
+        "y_centroid"
+      ],
+      "n": 62
+    },
+    "cells_schema": {
+      "columns": {
+        "cell_area": "float64",
+        "x_centroid": "float64",
+        "y_centroid": "float64"
+      }
+    },
+    "color_forced_cat__cell_area": {
+      "categories_digest": "240b60589d931fdd",
+      "digest": "cf5a6d01674f343a",
+      "n": 62,
+      "n_categories": 62,
+      "type": "categorical"
+    },
+    "color_gene_set": {
+      "digest": "90f5d24654cf35e1",
+      "max": 69.0,
+      "min": 0.0,
+      "n": 62,
+      "type": "continuous"
+    },
+    "color_meta__cell_area": {
+      "digest": "053579a6ae0afaf6",
+      "n": 62,
+      "type": "continuous"
+    },
+    "color_meta__x_centroid": {
+      "digest": "fb7ae1f6145429b3",
+      "n": 62,
+      "type": "continuous"
+    },
+    "color_meta__y_centroid": {
+      "digest": "f321b3a07f2159c4",
+      "n": 62,
+      "type": "continuous"
+    },
+    "gene_list": {
+      "digest": "6f1e76b0bd839528",
+      "n": 12
+    },
+    "info_keys": [
+      "format_variant",
+      "image_height_px",
+      "image_width_px",
+      "pixel_size",
+      "platform",
+      "roi"
+    ],
+    "pixel_size": 0.107161,
+    "platform": "seqfish",
+    "tx_bbox": {
+      "digest": "6f1eb67b21e4775c",
+      "keys": [
+        "feature_name",
+        "x_location",
+        "y_location"
+      ],
+      "n": 1750,
+      "total": 1750
+    },
+    "tx_bbox_half": {
+      "digest": "4474c8ca16d0c621",
+      "keys": [
+        "feature_name",
+        "x_location",
+        "y_location"
+      ],
+      "n": 875,
+      "total": 1750
+    },
+    "tx_full": {
+      "digest": "76f69c03e22fe137",
+      "keys": [
+        "feature_name",
+        "x_location",
+        "y_location"
+      ],
+      "n": 9051,
+      "total": 9051
+    },
+    "tx_gene0": {
+      "digest": "1526a4d6432a51ab",
+      "keys": [
+        "feature_name",
+        "x_location",
+        "y_location"
+      ],
+      "n": 370,
+      "total": 370
+    }
+  },
+  "seqfish_synthetic": {
+    "bounds_full": {
+      "digest": "fddd6d92608579b7",
+      "keys": [
+        "cell_id",
+        "vertex_x",
+        "vertex_y"
+      ],
+      "n": 509,
+      "n_cells": 36,
+      "total": 36
+    },
+    "bounds_half": {
+      "digest": "95dcb82de928fb18",
+      "n": 255,
+      "n_cells": 18,
+      "total": 36
+    },
+    "capabilities": {
+      "has_boundaries": true,
+      "has_morphology": true,
+      "has_transcripts": true,
+      "unit_label": "cell"
+    },
+    "cell_detail_0": "25ca1be475fb76eb",
+    "cell_expression_0": {
+      "digest": "a21358674d54a7f2",
+      "n": 36
+    },
+    "cells_all": {
+      "digest": "3041ba131e9fb3b6",
+      "keys": [
+        "cell_area",
+        "cell_id",
+        "x_centroid",
+        "y_centroid"
+      ],
+      "n": 36
+    },
+    "cells_schema": {
+      "columns": {
+        "cell_area": "float64",
+        "x_centroid": "float64",
+        "y_centroid": "float64"
+      }
+    },
+    "color_forced_cat__cell_area": {
+      "categories_digest": "f49dc022795723e8",
+      "digest": "04b252c1bb65e091",
+      "n": 36,
+      "n_categories": 36,
+      "type": "categorical"
+    },
+    "color_gene_set": {
+      "digest": "900101042f1887aa",
+      "max": 55.0,
+      "min": 0.0,
+      "n": 36,
+      "type": "continuous"
+    },
+    "color_meta__cell_area": {
+      "digest": "4a1c35b956b246ba",
+      "n": 36,
+      "type": "continuous"
+    },
+    "color_meta__x_centroid": {
+      "digest": "7edb0328310a8096",
+      "n": 36,
+      "type": "continuous"
+    },
+    "color_meta__y_centroid": {
+      "digest": "9ba0a1c6fd2d6107",
+      "n": 36,
+      "type": "continuous"
+    },
+    "edge__edges.parquet__catalogue": {
+      "digest": "24dd3ff8d4361233",
+      "n": 30
+    },
+    "edge__edges.parquet__color_lrm": {
+      "digest": "147980b074db33d3"
+    },
+    "edge__edges.parquet__detail0": "78d7e0433da4808e",
+    "edge__edges.parquet__filter__is_autocrine": {
+      "digest": "99f18f8571d0f208",
+      "keys": [
+        "edge",
+        "is_autocrine",
+        "lrm_count",
+        "receiving_cell",
+        "receiving_type",
+        "score_sum",
+        "sending_cell",
+        "sending_type",
+        "x1",
+        "x2",
+        "y1",
+        "y2"
+      ],
+      "n": 214
+    },
+    "edge__edges.parquet__grouped": {
+      "digest": "95d8d03ded9a9ecb",
+      "keys": [
+        "edge",
+        "is_autocrine",
+        "lrm_count",
+        "receiving_cell",
+        "receiving_type",
+        "score_sum",
+        "sending_cell",
+        "sending_type",
+        "x1",
+        "x2",
+        "y1",
+        "y2"
+      ],
+      "n": 250
+    },
+    "edge__edges.parquet__schema": {
+      "columns": {
+        "edge": "string",
+        "is_autocrine": "bool",
+        "ligand": "string",
+        "lrm": "string",
+        "lrm_id": "int32",
+        "receiving_cell": "string",
+        "receiving_type": "string",
+        "receptor": "string",
+        "score": "double",
+        "score_norm": "double",
+        "sending_cell": "string",
+        "sending_type": "string",
+        "x1": "double",
+        "x2": "double",
+        "y1": "double",
+        "y2": "double"
+      }
+    },
+    "edge__edges.parquet__scores": {
+      "digest": "9f9058198fb1830f",
+      "keys": [
+        "edge",
+        "visible_lrm_count",
+        "visible_score_sum"
+      ],
+      "n": 250
+    },
+    "gene_list": {
+      "digest": "66064248776a3e2f",
+      "n": 36
+    },
+    "info_keys": [
+      "format_variant",
+      "image_height_px",
+      "image_width_px",
+      "pixel_size",
+      "platform",
+      "roi"
+    ],
+    "pixel_size": 0.107161,
+    "platform": "seqfish",
+    "tx_bbox": {
+      "digest": "36efb1f9c5aa2e08",
+      "keys": [
+        "feature_name",
+        "x_location",
+        "y_location"
+      ],
+      "n": 1512,
+      "total": 1512
+    },
+    "tx_bbox_half": {
+      "digest": "31024d3a61b1ba36",
+      "keys": [
+        "feature_name",
+        "x_location",
+        "y_location"
+      ],
+      "n": 756,
+      "total": 1512
+    },
+    "tx_full": {
+      "digest": "bfe5e6481e985a84",
+      "keys": [
+        "feature_name",
+        "x_location",
+        "y_location"
+      ],
+      "n": 10026,
+      "total": 10026
+    },
+    "tx_gene0": {
+      "digest": "e723802d142919aa",
+      "keys": [
+        "feature_name",
+        "x_location",
+        "y_location"
+      ],
+      "n": 258,
+      "total": 258
+    }
+  },
+  "visium_hd_tiny": {
+    "bounds_full": {
+      "digest": "cd35b92208180b99",
+      "keys": [
+        "cell_id",
+        "vertex_x",
+        "vertex_y"
+      ],
+      "n": 83320,
+      "n_cells": 20830,
+      "total": 20830
+    },
+    "bounds_half": {
+      "digest": "95081e497eddedcf",
+      "n": 41660,
+      "n_cells": 10415,
+      "total": 20830
+    },
+    "capabilities": {
+      "has_boundaries": true,
+      "has_morphology": true,
+      "has_transcripts": false,
+      "unit_label": "bin"
+    },
+    "cell_detail_0": "335cd56d146cb6f7",
+    "cell_expression_0": {
+      "digest": "44136fa355b3678a",
+      "n": 0
+    },
+    "cells_all": {
+      "digest": "86c7b0d0860673e8",
+      "keys": [
+        "array_col",
+        "array_row",
+        "cell_id",
+        "x_centroid",
+        "y_centroid"
+      ],
+      "n": 20830
+    },
+    "cells_schema": {
+      "columns": {
+        "array_col": "uint32",
+        "array_row": "uint32",
+        "x_centroid": "float64",
+        "y_centroid": "float64"
+      }
+    },
+    "color_forced_cat__array_row": {
+      "categories_digest": "cb1f070cb9fb1832",
+      "digest": "e2371587c0c48cbc",
+      "n": 20830,
+      "n_categories": 98,
+      "type": "categorical"
+    },
+    "color_gene_set": {
+      "digest": "654b57fb083efe14",
+      "max": 1.0,
+      "min": 0.0,
+      "n": 20830,
+      "type": "continuous"
+    },
+    "color_meta__array_row": {
+      "digest": "e437cf85ebbc2bf8",
+      "n": 20830,
+      "type": "continuous"
+    },
+    "color_meta__x_centroid": {
+      "digest": "c41021fad7667686",
+      "n": 20830,
+      "type": "continuous"
+    },
+    "color_meta__y_centroid": {
+      "digest": "026a12c0bd52c1d9",
+      "n": 20830,
+      "type": "continuous"
+    },
+    "edge__edges.parquet__catalogue": {
+      "digest": "c3b1db00289e94db",
+      "n": 69
+    },
+    "edge__edges.parquet__color_lrm": {
+      "digest": "d64c43b4d5cff51c"
+    },
+    "edge__edges.parquet__detail0": "89d54bdc782c25cb",
+    "edge__edges.parquet__filter__is_autocrine": {
+      "digest": "794574a264114c51",
+      "keys": [
+        "edge",
+        "is_autocrine",
+        "lrm_count",
+        "receiving_cell",
+        "receiving_type",
+        "score_sum",
+        "sending_cell",
+        "sending_type",
+        "x1",
+        "x2",
+        "y1",
+        "y2"
+      ],
+      "n": 62680
+    },
+    "edge__edges.parquet__grouped": {
+      "digest": "8a6fa8e717282f31",
+      "keys": [
+        "edge",
+        "is_autocrine",
+        "lrm_count",
+        "receiving_cell",
+        "receiving_type",
+        "score_sum",
+        "sending_cell",
+        "sending_type",
+        "x1",
+        "x2",
+        "y1",
+        "y2"
+      ],
+      "n": 66001
+    },
+    "edge__edges.parquet__schema": {
+      "columns": {
+        "edge": "string",
+        "is_autocrine": "bool",
+        "ligand": "string",
+        "lrm": "string",
+        "lrm_id": "int32",
+        "receiving_cell": "string",
+        "receiving_type": "string",
+        "receptor": "string",
+        "score": "double",
+        "score_norm": "double",
+        "sending_cell": "string",
+        "sending_type": "string",
+        "x1": "double",
+        "x2": "double",
+        "y1": "double",
+        "y2": "double"
+      }
+    },
+    "edge__edges.parquet__scores": {
+      "digest": "5752b4d3df1bab85",
+      "keys": [
+        "edge",
+        "visible_lrm_count",
+        "visible_score_sum"
+      ],
+      "n": 66001
+    },
+    "gene_list": {
+      "digest": "40a2e076472f6c63",
+      "n": 32245
+    },
+    "info_keys": [
+      "available_bins",
+      "bin",
+      "bin_side_px",
+      "bin_size_um",
+      "pixel_size",
+      "platform",
+      "tissue_hires_scalef"
+    ],
+    "pixel_size": 1.003128,
+    "platform": "visium_hd"
+  },
+  "xenium_human_breast_2fov": {
+    "bounds_full": {
+      "digest": "2e6916032112a6e5",
+      "keys": [
+        "cell_id",
+        "vertex_x",
+        "vertex_y"
+      ],
+      "n": 181804,
+      "n_cells": 7275,
+      "total": 7275
+    },
+    "bounds_half": {
+      "digest": "ff23537fade12766",
+      "n": 90908,
+      "n_cells": 3638,
+      "total": 7275
+    },
+    "capabilities": {
+      "has_boundaries": true,
+      "has_morphology": true,
+      "has_transcripts": true,
+      "unit_label": "cell"
+    },
+    "cell_detail_0": "a359455dace01553",
+    "cell_expression_0": {
+      "digest": "bcc35f27b554d1f2",
+      "n": 32
+    },
+    "cells_all": {
+      "digest": "278bcced1ed14e24",
+      "keys": [
+        "cell_area",
+        "cell_id",
+        "control_codeword_counts",
+        "control_probe_counts",
+        "deprecated_codeword_counts",
+        "nucleus_area",
+        "total_counts",
+        "transcript_counts",
+        "unassigned_codeword_counts",
+        "x_centroid",
+        "y_centroid"
+      ],
+      "n": 7275
+    },
+    "cells_schema": {
+      "columns": {
+        "cell_area": "float64",
+        "control_codeword_counts": "int64",
+        "control_probe_counts": "int64",
+        "deprecated_codeword_counts": "int64",
+        "nucleus_area": "float64",
+        "total_counts": "int64",
+        "transcript_counts": "int64",
+        "unassigned_codeword_counts": "int64",
+        "x_centroid": "float64",
+        "y_centroid": "float64"
+      }
+    },
+    "color_forced_cat__transcript_counts": {
+      "categories_digest": "0790d6f4f3f4066d",
+      "digest": "1764190c4065b50d",
+      "n": 7275,
+      "n_categories": 422,
+      "type": "categorical"
+    },
+    "color_forced_cont__control_probe_counts": {
+      "categories_digest": null,
+      "digest": "4068afac4f77e1b4",
+      "n": 7275,
+      "n_categories": null,
+      "type": "continuous"
+    },
+    "color_gene_set": {
+      "digest": "7e62d7c4719e9927",
+      "max": 37.0,
+      "min": 0.0,
+      "n": 7275,
+      "type": "continuous"
+    },
+    "color_meta__transcript_counts": {
+      "digest": "8f4b807981994590",
+      "n": 7275,
+      "type": "continuous"
+    },
+    "color_meta__x_centroid": {
+      "digest": "8b33aa9839229c15",
+      "n": 7275,
+      "type": "continuous"
+    },
+    "color_meta__y_centroid": {
+      "digest": "46264600ea1f3396",
+      "n": 7275,
+      "type": "continuous"
+    },
+    "edge__edges.parquet__catalogue": {
+      "digest": "556c70f23429ddd8",
+      "n": 20
+    },
+    "edge__edges.parquet__color_lrm": {
+      "digest": "f454e9ec05ba3d82"
+    },
+    "edge__edges.parquet__detail0": "502de7ce02b60495",
+    "edge__edges.parquet__filter__is_autocrine": {
+      "digest": "cb64d837bdcc7877",
+      "keys": [
+        "edge",
+        "is_autocrine",
+        "lrm_count",
+        "receiving_cell",
+        "receiving_type",
+        "score_sum",
+        "sending_cell",
+        "sending_type",
+        "x1",
+        "x2",
+        "y1",
+        "y2"
+      ],
+      "n": 43650
+    },
+    "edge__edges.parquet__grouped": {
+      "digest": "2587c77fd6f6a1b3",
+      "keys": [
+        "edge",
+        "is_autocrine",
+        "lrm_count",
+        "receiving_cell",
+        "receiving_type",
+        "score_sum",
+        "sending_cell",
+        "sending_type",
+        "x1",
+        "x2",
+        "y1",
+        "y2"
+      ],
+      "n": 44759
+    },
+    "edge__edges.parquet__schema": {
+      "columns": {
+        "edge": "string",
+        "is_autocrine": "bool",
+        "ligand": "string",
+        "lrm": "string",
+        "lrm_id": "int64",
+        "receiving_cell": "string",
+        "receiving_type": "string",
+        "receptor": "string",
+        "score": "double",
+        "score_norm": "double",
+        "sending_cell": "string",
+        "sending_type": "string",
+        "x1": "double",
+        "x2": "double",
+        "y1": "double",
+        "y2": "double"
+      }
+    },
+    "edge__edges.parquet__scores": {
+      "digest": "96471c6f8561b653",
+      "keys": [
+        "edge",
+        "visible_lrm_count",
+        "visible_score_sum"
+      ],
+      "n": 44759
+    },
+    "edge__edges__niches_rad30.parquet__catalogue": {
+      "digest": "931e3a76e6dcb943",
+      "n": 32
+    },
+    "edge__edges__niches_rad30.parquet__color_lrm": {
+      "digest": "f746905c1d52f0aa"
+    },
+    "edge__edges__niches_rad30.parquet__detail0": "0635850ff026fa23",
+    "edge__edges__niches_rad30.parquet__filter__is_autocrine": {
+      "digest": "1dea970e0700b956",
+      "keys": [
+        "edge",
+        "is_autocrine",
+        "lrm_count",
+        "receiving_cell",
+        "receiving_type",
+        "score_sum",
+        "sending_cell",
+        "sending_type",
+        "x1",
+        "x2",
+        "y1",
+        "y2"
+      ],
+      "n": 174248
+    },
+    "edge__edges__niches_rad30.parquet__grouped": {
+      "digest": "d2e6d82664d037f3",
+      "keys": [
+        "edge",
+        "is_autocrine",
+        "lrm_count",
+        "receiving_cell",
+        "receiving_type",
+        "score_sum",
+        "sending_cell",
+        "sending_type",
+        "x1",
+        "x2",
+        "y1",
+        "y2"
+      ],
+      "n": 181523
+    },
+    "edge__edges__niches_rad30.parquet__schema": {
+      "columns": {
+        "edge": "string",
+        "is_autocrine": "bool",
+        "ligand": "string",
+        "lrm": "string",
+        "lrm_id": "int32",
+        "receiving_cell": "string",
+        "receiving_type": "string",
+        "receptor": "string",
+        "score": "double",
+        "score_norm": "double",
+        "sending_cell": "string",
+        "sending_type": "string",
+        "x1": "double",
+        "x2": "double",
+        "y1": "double",
+        "y2": "double"
+      }
+    },
+    "edge__edges__niches_rad30.parquet__scores": {
+      "digest": "faa8387261bbb51a",
+      "keys": [
+        "edge",
+        "visible_lrm_count",
+        "visible_score_sum"
+      ],
+      "n": 181523
+    },
+    "filter_bounds__control_probe_counts": {
+      "n_cells": 7272,
+      "total": 7272
+    },
+    "filter_ids__control_probe_counts": 7272,
+    "gene_list": {
+      "digest": "bfd0eef30077d962",
+      "n": 280
+    },
+    "info_keys": [
+      "analysis_sw_version",
+      "analysis_uuid",
+      "calibration_uuid",
+      "cassette_name",
+      "cassette_uuid",
+      "experiment_uuid",
+      "images",
+      "instrument_sn",
+      "instrument_sw_version",
+      "major_version",
+      "minor_version",
+      "num_cells",
+      "panel_design_id",
+      "panel_name",
+      "panel_num_targets_custom",
+      "panel_num_targets_predesigned",
+      "panel_organism",
+      "panel_predesigned_id",
+      "panel_tissue_type",
+      "patch_version",
+      "pixel_size",
+      "platform",
+      "preservation_method",
+      "region_name",
+      "roi_uuid",
+      "run_name",
+      "run_start_time",
+      "segmentation_stain",
+      "slide_id",
+      "transcripts_per_100um",
+      "transcripts_per_cell",
+      "well_uuid",
+      "xenium_explorer_files",
+      "z_step_size"
+    ],
+    "pixel_size": 0.2125,
+    "platform": "xenium",
+    "tx_bbox": {
+      "digest": "bd94661711d7cd2d",
+      "keys": [
+        "feature_name",
+        "qv",
+        "x_location",
+        "y_location"
+      ],
+      "n": 200000,
+      "total": 228952
+    },
+    "tx_bbox_half": {
+      "digest": "533e723da47274dc",
+      "keys": [
+        "feature_name",
+        "qv",
+        "x_location",
+        "y_location"
+      ],
+      "n": 114476,
+      "total": 228952
+    },
+    "tx_full": {
+      "digest": "4531f4ac79155e19",
+      "keys": [
+        "feature_name",
+        "qv",
+        "x_location",
+        "y_location"
+      ],
+      "n": 200000,
+      "total": 1113950
+    },
+    "tx_gene0": {
+      "digest": "6b2cf14148751692",
+      "keys": [
+        "feature_name",
+        "qv",
+        "x_location",
+        "y_location"
+      ],
+      "n": 62,
+      "total": 62
+    }
+  }
+}

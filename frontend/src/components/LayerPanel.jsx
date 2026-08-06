@@ -86,12 +86,21 @@ function DatasetPicker() {
       .then((list) => {
         if (!Array.isArray(list)) return;
         setImages(list);
-        if (list.length > 0 && !list.includes(activeImage)) {
-          setActiveImage(list[0]);
-        }
       })
       .catch(() => setImages([]));
   }, [apiBase, dataset]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Keep activeImage valid for whatever images the current dataset offers.
+  // This is a separate, declarative effect rather than a branch inside the fetch
+  // above because the fetch only re-runs on dataset change: with activeImage
+  // captured in its closure, whether it got set depended on the order the two
+  // state updates landed in, which left datasets whose only image is the
+  // synthesised placeholder with activeImage stuck at null and no viewer at all.
+  useEffect(() => {
+    if (images.length > 0 && !images.includes(activeImage)) {
+      setActiveImage(images[0]);
+    }
+  }, [images, activeImage]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (datasets.length === 0) {
     return (
@@ -117,7 +126,7 @@ function DatasetPicker() {
         <>
           <div style={{ ...SECTION_HEADER, marginTop: 8 }}>Image</div>
           <select
-            value={activeImage}
+            value={activeImage || ""}
             onChange={(e) => setActiveImage(e.target.value)}
             style={SELECT_STYLE}
           >
@@ -135,6 +144,9 @@ export default function LayerPanel() {
   const { platformCapabilities, apiBase } = useStore();
   const hasTranscripts = platformCapabilities?.has_transcripts ?? true;
   const hasBoundaries  = platformCapabilities?.has_boundaries  ?? true;
+  // A dataset with no morphology gets a placeholder canvas, so the opacity
+  // control would be a dead toggle over a flat fill.
+  const hasMorphology  = platformCapabilities?.has_morphology  ?? true;
   const unitLabel      = platformCapabilities?.unit_label ?? "cell";
   const unitTitle      = unitLabel.charAt(0).toUpperCase() + unitLabel.slice(1);
 
@@ -167,12 +179,18 @@ export default function LayerPanel() {
       <div style={{ fontWeight: "bold", marginBottom: 10, fontSize: 13, color: "#fff" }}>Layers</div>
 
       <div style={SECTION_HEADER}>Core</div>
-      <MorphologyRow />
+      {hasMorphology && <MorphologyRow />}
       {hasTranscripts && <TranscriptLayerRow />}
       {hasBoundaries  && <CellSegmentsRow unitTitle={unitTitle} />}
 
       <div style={SECTION_HEADER}>{unitTitle} Color</div>
       <ColorBySection unitLabel={unitLabel} />
+
+      {/* Issue #45. Placed under the color section because picking the column to
+          subset on is the same act as picking the column to colour by, and users
+          almost always do the two together. */}
+      <div style={SECTION_HEADER}>{unitTitle} Filter</div>
+      <CellFilterSection unitLabel={unitLabel} />
 
       {hasTranscripts && (
         <>
@@ -215,6 +233,8 @@ function ColorBySection({ unitLabel = "cell" }) {
     selectedGenes,
     cellColorRange,
     cellColorClamp, setCellColorClamp,
+    categoricalOverrides, setCategoricalOverride,
+    cellColorType, cellColorCategories,
   } = useStore();
 
   const [cellSchema, setCellSchema] = useState(null);
@@ -236,10 +256,20 @@ function ColorBySection({ unitLabel = "cell" }) {
   const { mode, field } = colorBy;
   const selectedCount = selectedGenes === null ? allGenes.length : selectedGenes.size;
 
-  // Determine if the selected metadata column is categorical
+  // How the selected column is actually being coloured. This comes from the
+  // backend's response (via the store, written by panel 0) rather than from the
+  // schema dtype: the backend also treats a low-cardinality integer column as
+  // categorical, so guessing from dtype used to draw a gradient legend with two
+  // dead sliders over a canvas that was already showing discrete colours.
   const fieldDtype = field && cellSchema ? cellSchema.columns[field] : null;
-  const isCategorical = fieldDtype === "object" || fieldDtype === "string" ||
-    (fieldDtype?.startsWith("int") && false); // int cols treated as continuous unless overridden
+  const isCategorical = mode === "metadata" && !!field && cellColorType === "categorical";
+
+  // The override is only meaningful for a numeric column — a text column has no
+  // gradient to fall back to, so there is nothing to offer.
+  const isNumericField = !!fieldDtype &&
+    /^(int|uint|float|Int|UInt|Float)/.test(fieldDtype);
+  const overrideKey = `cell::${field}`;
+  const override = categoricalOverrides[overrideKey] ?? null;
 
   return (
     <div style={{ marginBottom: 6 }}>
@@ -288,6 +318,37 @@ function ColorBySection({ unitLabel = "cell" }) {
                   <option key={c} value={c}>{c}</option>
                 ))}
               </select>
+
+              {/* Issue #35: integer-coded cluster IDs arrive as ints and would
+                  otherwise be drawn as a gradient. Unchecking forces the reverse,
+                  which is how you get a gradient over a column the auto-rule
+                  called categorical. */}
+              {isNumericField && (
+                <label style={{ ...LABEL_STYLE, marginTop: 5, fontSize: 10, color: "#888" }}>
+                  <input
+                    type="checkbox"
+                    checked={isCategorical}
+                    onChange={(e) => {
+                      setCategoricalOverride("cell", field, e.target.checked);
+                      setCellColorClamp(null, null);
+                    }}
+                    style={{ accentColor: "#6cf" }}
+                  />
+                  treat as categorical
+                  {override !== null && (
+                    <button
+                      onClick={(e) => {
+                        e.preventDefault();
+                        setCategoricalOverride("cell", field, null);
+                      }}
+                      title="Go back to auto-detection for this column"
+                      style={{ ...CHIP_STYLE, marginLeft: 4, color: "#666" }}
+                    >
+                      auto
+                    </button>
+                  )}
+                </label>
+              )}
             </>
           )}
 
@@ -314,7 +375,7 @@ function ColorBySection({ unitLabel = "cell" }) {
               clamp={cellColorClamp} setClamp={setCellColorClamp} accentColor="#6cf" />
           )}
           {mode === "metadata" && field && isCategorical && (
-            <CategoricalLegend field={field} apiBase={apiBase} dataset={dataset} />
+            <CategoricalLegend field={field} categories={cellColorCategories} />
           )}
         </>
       )}
@@ -369,7 +430,16 @@ function ClampableLegend({ label, palette, vmin, vmax, clamp, setClamp, accentCo
   );
 }
 
-function CategoricalLegend({ field, apiBase, dataset }) {
+/**
+ * Editable per-category swatches.
+ *
+ * `categories` comes from the store, where panel 0 records whatever the backend
+ * returned for the active column. This component used to re-POST /color-values
+ * for itself, which duplicated a request the viewer had already made and — once
+ * the categorical override existed — would have asked without it, so the legend
+ * could disagree with the canvas it describes.
+ */
+function CategoricalLegend({ field, categories = [] }) {
   const {
     categoryColorOverrides,
     setCategoryColorOverride,
@@ -377,20 +447,7 @@ function CategoricalLegend({ field, apiBase, dataset }) {
     resetCategoryColorOverrides,
   } = useStore();
 
-  const [categories, setCategories] = useState([]);
   const fileInputRef = useRef(null);
-
-  useEffect(() => {
-    if (!field) return;
-    fetch(`${apiBase}/spatial/${dataset}/color-values`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mode: "metadata", field }),
-    })
-      .then((r) => r.json())
-      .then((d) => { if (d.type === "categorical") setCategories(d.categories); })
-      .catch(() => {});
-  }, [apiBase, dataset, field]);
 
   // Resolve display color for a category: override → QUAL_PALETTE → hash
   // Must mirror the logic in useCellColors.js so legend stays in sync.
@@ -520,6 +577,216 @@ function CategoricalLegend({ field, apiBase, dataset }) {
     </div>
   );
 }
+
+// ── Metadata filter (issue #45) ───────────────────────────────────────────────
+/**
+ * Restrict the view to a subset of units by one metadata column.
+ *
+ * One component serves both the cell filter and the edge filter — they differ
+ * only in which endpoint supplies the column list and the distinct values, so
+ * those arrive as props. The chosen filter is written to the store and travels
+ * to the backend, which applies it *before* sampling; doing it client-side would
+ * leave a sample of a subset rather than the subset.
+ *
+ * Two shapes, chosen by what the backend says the column is:
+ *   categorical — checkboxes, one per value (this is the "focus on 2–3 cell
+ *                 types" case from the issue)
+ *   continuous  — inclusive min/max bounds
+ */
+function MetadataFilterSection({
+  scope, columns, filter, setFilter, fetchValues, unitLabel = "cell",
+}) {
+  const [meta, setMeta] = useState(null);      // { type, categories, min, max }
+  const [loading, setLoading] = useState(false);
+  const field = filter?.field ?? "";
+
+  // Load the distinct values / range for the selected column.
+  useEffect(() => {
+    if (!field) { setMeta(null); return; }
+    let cancelled = false;
+    setLoading(true);
+    fetchValues(field)
+      .then((d) => { if (!cancelled && d) setMeta(d); })
+      .catch(() => { if (!cancelled) setMeta(null); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [field, fetchValues]);
+
+  const selected = new Set(filter?.values ?? []);
+  const active = (filter?.values?.length ?? 0) > 0 ||
+                 filter?.min != null || filter?.max != null;
+
+  function chooseField(next) {
+    // Values and bounds belong to the old column; carrying them over would
+    // silently filter on labels that do not exist in the new one.
+    setFilter(next ? { field: next, values: null, min: null, max: null } : null);
+  }
+
+  function toggle(cat) {
+    const next = new Set(selected);
+    if (next.has(cat)) next.delete(cat); else next.add(cat);
+    setFilter({ ...filter, values: next.size ? [...next] : null });
+  }
+
+  return (
+    <div style={{ marginBottom: 6 }}>
+      <select value={field} onChange={(e) => chooseField(e.target.value)} style={SELECT_STYLE}>
+        <option value="">— no {unitLabel} filter —</option>
+        {columns.map((c) => <option key={c} value={c}>{c}</option>)}
+      </select>
+
+      {field && loading && (
+        <div style={{ fontSize: 9, color: "#555", marginTop: 4 }}>loading values…</div>
+      )}
+
+      {field && !loading && meta?.type === "categorical" && (
+        <div style={{ marginTop: 5 }}>
+          <div style={{ maxHeight: 150, overflowY: "auto", paddingRight: 2 }}>
+            {(meta.categories ?? []).map((cat) => (
+              <label key={cat} style={{ ...LABEL_STYLE, fontSize: 10, marginBottom: 2 }}>
+                <input
+                  type="checkbox"
+                  checked={selected.has(cat)}
+                  onChange={() => toggle(cat)}
+                  style={{ accentColor: "#6cf" }}
+                />
+                <span style={{
+                  overflow: "hidden", textOverflow: "ellipsis",
+                  whiteSpace: "nowrap", flex: 1,
+                }} title={cat}>{cat}</span>
+              </label>
+            ))}
+          </div>
+          <div style={{ display: "flex", gap: 6, marginTop: 4, alignItems: "center" }}>
+            <button style={{ ...CHIP_STYLE, color: "#6cf" }}
+                    onClick={() => setFilter({ ...filter, values: [...(meta.categories ?? [])] })}>
+              all
+            </button>
+            <button style={{ ...CHIP_STYLE, color: "#888" }}
+                    onClick={() => setFilter({ ...filter, values: null })}>
+              none
+            </button>
+            <span style={{ fontSize: 9, color: "#555", marginLeft: "auto" }}>
+              {/* No selection is "show everything", not "show nothing" — an empty
+                  allowlist would blank the canvas the moment a column is picked. */}
+              {selected.size
+                ? `${selected.size} of ${(meta.categories ?? []).length} shown`
+                : "all shown"}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {field && !loading && meta?.type === "continuous" && (
+        <div style={{ marginTop: 5, display: "flex", gap: 4, alignItems: "center" }}>
+          <span style={{ fontSize: 9, color: "#555" }}>min</span>
+          <input
+            type="number" placeholder={fmtBound(meta.min)}
+            value={filter?.min ?? ""}
+            onChange={(e) => setFilter({
+              ...filter, min: e.target.value === "" ? null : parseFloat(e.target.value),
+            })}
+            style={{ ...SELECT_STYLE, marginTop: 0, width: 0, flex: 1 }}
+          />
+          <span style={{ fontSize: 9, color: "#555" }}>max</span>
+          <input
+            type="number" placeholder={fmtBound(meta.max)}
+            value={filter?.max ?? ""}
+            onChange={(e) => setFilter({
+              ...filter, max: e.target.value === "" ? null : parseFloat(e.target.value),
+            })}
+            style={{ ...SELECT_STYLE, marginTop: 0, width: 0, flex: 1 }}
+          />
+        </div>
+      )}
+
+      {active && (
+        <button onClick={() => setFilter(null)}
+                style={{ ...CHIP_STYLE, marginTop: 5, color: "#f96" }}>
+          clear filter
+        </button>
+      )}
+    </div>
+  );
+}
+
+function fmtBound(v) {
+  if (v == null) return "";
+  return Math.abs(v) >= 1000 || (v !== 0 && Math.abs(v) < 0.01)
+    ? v.toExponential(1) : String(Math.round(v * 1000) / 1000);
+}
+
+function CellFilterSection({ unitLabel = "cell" }) {
+  const { apiBase, dataset, cellFilter, setCellFilter, categoricalOverrides } = useStore();
+  const [columns, setColumns] = useState([]);
+
+  useEffect(() => {
+    fetch(`${apiBase}/spatial/${dataset}/cells/schema`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((s) => setColumns(s?.columns ? Object.keys(s.columns) : []))
+      .catch(() => setColumns([]));
+  }, [apiBase, dataset]);
+
+  // Honour the same categorical override the color panel uses, so a column the
+  // user has declared categorical offers checkboxes here rather than a range.
+  const fetchValues = React.useCallback((field) => {
+    const categorical = categoricalOverrides[`cell::${field}`] ?? null;
+    return fetch(`${apiBase}/spatial/${dataset}/color-values`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "metadata", field, categorical }),
+    }).then((r) => (r.ok ? r.json() : null));
+  }, [apiBase, dataset, categoricalOverrides]);
+
+  return (
+    <MetadataFilterSection
+      scope="cell" columns={columns} filter={cellFilter} setFilter={setCellFilter}
+      fetchValues={fetchValues} unitLabel={unitLabel}
+    />
+  );
+}
+
+function EdgeFilterSection() {
+  const { apiBase, dataset, edgeFile, edgeFilter, setEdgeFilter, categoricalOverrides } = useStore();
+  const [columns, setColumns] = useState([]);
+  const efParam = `?edge_file=${encodeURIComponent(edgeFile)}`;
+
+  useEffect(() => {
+    fetch(`${apiBase}/edges/${dataset}/schema${efParam}`)
+      .then((r) => (r.ok ? r.json() : null))
+      // Structural and per-LRM columns are not edge attributes to subset on:
+      // one edge has many LRM rows, so "lrm = X" is a mechanism filter, which
+      // the LRM checklist below already does properly.
+      .then((s) => setColumns(
+        s?.columns
+          ? Object.keys(s.columns).filter((c) => !EDGE_FILTER_SKIP.has(c))
+          : []
+      ))
+      .catch(() => setColumns([]));
+  }, [apiBase, dataset, efParam]);
+
+  const fetchValues = React.useCallback((field) => {
+    const categorical = categoricalOverrides[`edge::${field}`] ?? null;
+    return fetch(`${apiBase}/edges/${dataset}/edge-color-values${efParam}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "metadata", field, categorical }),
+    }).then((r) => (r.ok ? r.json() : null));
+  }, [apiBase, dataset, efParam, categoricalOverrides]);
+
+  if (!columns.length) return null;
+  return (
+    <MetadataFilterSection
+      scope="edge" columns={columns} filter={edgeFilter} setFilter={setEdgeFilter}
+      fetchValues={fetchValues} unitLabel="edge"
+    />
+  );
+}
+
+const EDGE_FILTER_SKIP = new Set([
+  "edge", "sending_cell", "receiving_cell", "x1", "y1", "x2", "y2",
+  "lrm", "lrm_id", "ligand", "receptor", "score", "score_norm",
+]);
 
 // ── Morphology row ────────────────────────────────────────────────────────────
 function MorphologyRow() {
@@ -982,6 +1249,7 @@ const EDGE_SKIP_COLS = new Set(["x1", "y1", "x2", "y2", "edge", "sending_cell", 
 function EdgeSection() {
   const {
     apiBase, dataset,
+    edgeFile, setEdgeFile,
     layers, setLayerProp,
     edgeMinStrength, setEdgeMinStrength,
     edgeColorBy, setEdgeColorBy,
@@ -999,25 +1267,49 @@ function EdgeSection() {
     hiddenLrms, toggleLrm, setAllLrmsVisible, hideAllLrms,
     edgeColorRange,
     edgeColorClamp, setEdgeColorClamp,
+    categoricalOverrides, setCategoricalOverride,
   } = useStore();
   const state = layers.edges ?? { visible: true, opacity: 0.9 };
   const [localStrength, setLocalStrength] = useState(edgeMinStrength ?? 0);
   const commitTimer = useRef(null);
   const [edgeSchema, setEdgeSchema] = useState(null);
   const [lrmSearch, setLrmSearch] = useState("");
+  // List of edge-source files in the current dataset: [{id, label}].
+  const [edgeFiles, setEdgeFiles] = useState([]);
 
+  // ── edge-source parquet list (issue #46) ────────────────────────────────────
+  // Fetch the available edge files for the dataset and select the backend-provided
+  // default (legacy top-level edges.parquet if present, else the first). Falls back
+  // gracefully to a single implicit "edges.parquet" if the endpoint returns nothing.
   useEffect(() => {
-    fetch(`${apiBase}/edges/${dataset}/schema`)
+    if (!dataset) return;
+    fetch(`${apiBase}/edges/${dataset}/files`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        const files = Array.isArray(data?.files) ? data.files : [];
+        setEdgeFiles(files);
+        if (files.length > 0) {
+          const cur = useStore.getState().edgeFile;
+          const ids = files.map((f) => f.id);
+          if (!ids.includes(cur)) setEdgeFile(data.default ?? ids[0]);
+        }
+      })
+      .catch(() => setEdgeFiles([]));
+  }, [apiBase, dataset]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const efParam = `?edge_file=${encodeURIComponent(edgeFile)}`;
+  useEffect(() => {
+    fetch(`${apiBase}/edges/${dataset}/schema${efParam}`)
       .then((r) => (r.ok ? r.json() : null))
       .then(setEdgeSchema)
       .catch(() => {});
     if (lrmCatalogue.length === 0) {
-      fetch(`${apiBase}/edges/${dataset}/lrm-catalogue`)
+      fetch(`${apiBase}/edges/${dataset}/lrm-catalogue${efParam}`)
         .then((r) => (r.ok ? r.json() : []))
         .then(setLrmCatalogue)
         .catch(() => {});
     }
-  }, [apiBase, dataset]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [apiBase, dataset, efParam]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleStrength = (e) => {
     const v = parseFloat(e.target.value);
@@ -1034,12 +1326,50 @@ function EdgeSection() {
   const { mode, field } = edgeColorBy;
   const selectedLrmCount = lrmCatalogue.length - hiddenLrms.size;
 
-  // Determine if selected metadata column is categorical
+  // How the selected edge metadata column is typed. Asking the backend rather
+  // than reading the dtype matters for the same reason it does on the cell side:
+  // the auto-rule also calls a low-cardinality integer column categorical, and an
+  // explicit override can flip either way (issue #35).
   const fieldDtype = field && edgeSchema ? edgeSchema.columns[field] : null;
-  const isCategorical = fieldDtype === "object" || fieldDtype === "string" || fieldDtype === "bool";
+  const isNumericField = !!fieldDtype && /^(int|uint|float|double|Int|UInt|Float)/.test(fieldDtype);
+  const edgeOverrideKey = `edge::${field}`;
+  const edgeOverride = categoricalOverrides[edgeOverrideKey] ?? null;
+
+  const [edgeMeta, setEdgeMeta] = useState(null);   // { type, categories }
+  useEffect(() => {
+    if (mode !== "metadata" || !field) { setEdgeMeta(null); return; }
+    let cancelled = false;
+    fetch(`${apiBase}/edges/${dataset}/edge-color-values${efParam}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "metadata", field, categorical: edgeOverride }),
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (!cancelled && d) setEdgeMeta({ type: d.type, categories: d.categories ?? [] }); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [apiBase, dataset, efParam, mode, field, edgeOverride]);
+
+  const isCategorical = mode === "metadata" && !!field && edgeMeta?.type === "categorical";
 
   return (
     <div style={{ marginBottom: 8 }}>
+      {/* Edge-source picker (issue #46) — only shown when the dataset has more than
+          one edge file. Applies to every open viewer panel. */}
+      {edgeFiles.length > 1 && (
+        <div style={{ marginBottom: 8 }}>
+          <select
+            value={edgeFile}
+            onChange={(e) => setEdgeFile(e.target.value)}
+            style={SELECT_STYLE}
+            title="Which edge-source parquet to render"
+          >
+            {edgeFiles.map((f) => (
+              <option key={f.id} value={f.id}>{f.label}</option>
+            ))}
+          </select>
+        </div>
+      )}
       <LayerRowBase
         label="Edges"
         color="#f90"
@@ -1189,14 +1519,39 @@ function EdgeSection() {
           )}
 
           {mode === "metadata" && (
-            <select
-              value={field ?? ""}
-              onChange={(e) => { setEdgeColorBy("metadata", e.target.value || null); setEdgeColorClamp(null, null); }}
-              style={{ ...SELECT_STYLE, marginTop: 4 }}
-            >
-              <option value="">— select column —</option>
-              {metaCols.map((c) => <option key={c} value={c}>{c}</option>)}
-            </select>
+            <>
+              <select
+                value={field ?? ""}
+                onChange={(e) => { setEdgeColorBy("metadata", e.target.value || null); setEdgeColorClamp(null, null); }}
+                style={{ ...SELECT_STYLE, marginTop: 4 }}
+              >
+                <option value="">— select column —</option>
+                {metaCols.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+              {field && isNumericField && (
+                <label style={{ ...LABEL_STYLE, marginTop: 5, fontSize: 10, color: "#888" }}>
+                  <input
+                    type="checkbox"
+                    checked={isCategorical}
+                    onChange={(e) => {
+                      setCategoricalOverride("edge", field, e.target.checked);
+                      setEdgeColorClamp(null, null);
+                    }}
+                    style={{ accentColor: "#f90" }}
+                  />
+                  treat as categorical
+                  {edgeOverride !== null && (
+                    <button
+                      onClick={(ev) => { ev.preventDefault(); setCategoricalOverride("edge", field, null); }}
+                      title="Go back to auto-detection for this column"
+                      style={{ ...CHIP_STYLE, marginLeft: 4, color: "#666" }}
+                    >
+                      auto
+                    </button>
+                  )}
+                </label>
+              )}
+            </>
           )}
 
           {/* Palette — only for continuous color modes */}
@@ -1222,8 +1577,15 @@ function EdgeSection() {
               clamp={edgeColorClamp} setClamp={setEdgeColorClamp} accentColor="#f90" />
           )}
           {mode === "metadata" && field && isCategorical && (
-            <EdgeCategoricalLegend field={field} apiBase={apiBase} dataset={dataset} />
+            <EdgeCategoricalLegend categories={edgeMeta?.categories ?? []} />
           )}
+
+          {/* ── Edge metadata filter (issue #45) ─────────────────────── */}
+          {/* Distinct from the LRM checklist below: this subsets *edges* by an
+              attribute of the pair (a curation call, a confidence), whereas the
+              checklist subsets the mechanisms scored on every edge. */}
+          <div style={{ ...SECTION_HEADER, marginTop: 10 }}>Edge Filter</div>
+          <EdgeFilterSection />
 
           {/* ── LRM Mechanisms checklist ─────────────────────────────── */}
           {lrmCatalogue.length > 0 && (
@@ -1281,21 +1643,10 @@ function EdgeSection() {
   );
 }
 
-function EdgeCategoricalLegend({ field, apiBase, dataset }) {
-  const [categories, setCategories] = useState([]);
-
-  useEffect(() => {
-    if (!field) return;
-    fetch(`${apiBase}/edges/${dataset}/edge-color-values`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mode: "metadata", field }),
-    })
-      .then((r) => r.json())
-      .then((d) => { if (d.type === "categorical") setCategories(d.categories); })
-      .catch(() => {});
-  }, [apiBase, dataset, field]);
-
+/** Read-only swatch list. Categories come from EdgeSection, which already asked
+ *  the backend for the column's type — one fetch, one answer, no chance of the
+ *  legend describing a different typing decision than the canvas is using. */
+function EdgeCategoricalLegend({ categories = [] }) {
   if (!categories.length) return null;
   return (
     <div style={{ marginTop: 6 }}>

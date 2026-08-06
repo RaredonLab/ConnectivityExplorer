@@ -10,10 +10,13 @@ import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
 
-from app.readers.base_reader import SpatialDatasetReader
+from app.readers import duck, spatial_cache
+from app.readers.base_reader import _UNSET, SpatialDatasetReader
 
-
-_UNSET = object()  # sentinel: "not yet loaded" vs "loaded, no data"
+# Hard ceiling on transcripts returned in one response, independent of `fraction`.
+# Guards against a request for fraction=1.0 over a whole-tissue viewport trying to
+# serialize tens of millions of rows.
+_MAX_TRANSCRIPTS = 200_000
 
 
 class XeniumReader(SpatialDatasetReader):
@@ -21,7 +24,6 @@ class XeniumReader(SpatialDatasetReader):
     def __init__(self, dataset_path: Path):
         super().__init__(dataset_path)
         self._pixel_size: Optional[float] = None
-        self._supp_meta = _UNSET
         self._cells_full_cache = _UNSET
 
     # ── Identity ──────────────────────────────────────────────────────────────
@@ -89,29 +91,73 @@ class XeniumReader(SpatialDatasetReader):
         genes: Optional[list[str]] = None,
         fraction: float = 1.0,
     ) -> dict:
-        df = self._read_parquet(
-            "transcripts.parquet",
-            columns=["x_location", "y_location", "feature_name", "qv"],
-        )
-        if df is None:
+        """Transcript detections in pixel space, bbox- and gene-filtered.
+
+        Queried through DuckDB so the bbox and gene predicates push down into the
+        parquet scan. Only matching row groups are read; a zoomed-in viewport on a
+        multi-GB transcripts.parquet touches a small fraction of the file.
+
+        ``total`` is the count *after* filtering but *before* sampling, because
+        the frontend uses it to report "showing N of M" and to calibrate density.
+        """
+        path = self.path / "transcripts.parquet"
+        if not path.exists():
             return {"transcripts": [], "total": 0}
-        if bbox:
-            xmin, ymin, xmax, ymax = self._bbox_to_native(bbox)
-            if None not in (xmin, ymin, xmax, ymax):
-                df = df[
-                    (df["x_location"] >= xmin) & (df["x_location"] <= xmax) &
-                    (df["y_location"] >= ymin) & (df["y_location"] <= ymax)
-                ]
-        if genes:
-            df = df[df["feature_name"].isin(genes)]
-        total = len(df)
-        fraction = max(0.0001, min(1.0, fraction))
-        sample_n = min(round(fraction * total), 200_000)
-        df = (df.sample(n=sample_n, random_state=42).copy()
-              if sample_n < total else df.copy())
-        df["x_location"] = df["x_location"] / self.pixel_size
-        df["y_location"] = df["y_location"] / self.pixel_size
-        return {"transcripts": self._to_records(df), "total": total}
+
+        cols = duck.columns(path)
+        if not {"x_location", "y_location"} <= cols:
+            return {"transcripts": [], "total": 0}
+        # Query the spatially-sorted copy when one exists, so the bbox predicate
+        # can actually skip row groups. Falls back to `path` transparently.
+        path = spatial_cache.sorted_path(
+            path, self.path, "x_location", "y_location") or path
+        # qv is absent from some exports — select only what the file actually has.
+        select_cols = [c for c in ("x_location", "y_location", "feature_name", "qv")
+                       if c in cols]
+        select = ", ".join(f'"{c}"' for c in select_cols)
+
+        conditions: list[str] = []
+        params: list = []
+
+        bbox_sql, bbox_params = duck.bbox_predicate(
+            "x_location", "y_location",
+            self._bbox_to_native(bbox) if bbox else None,
+        )
+        if bbox_sql:
+            conditions.append(bbox_sql)
+            params.extend(bbox_params)
+
+        if genes and "feature_name" in cols:
+            gene_sql, gene_params = duck.in_predicate("feature_name", genes)
+            conditions.append(gene_sql)
+            params.extend(gene_params)
+
+        where = duck.where_clause(conditions)
+        src = duck.scan(path)
+
+        with duck.connect() as conn:
+            total = conn.execute(
+                f"SELECT COUNT(*) FROM {src} {where}", params
+            ).fetchone()[0]
+            total = int(total or 0)
+            if total == 0:
+                return {"transcripts": [], "total": 0}
+
+            fraction = max(0.0001, min(1.0, fraction))
+            sample_n = min(round(fraction * total), _MAX_TRANSCRIPTS)
+            if sample_n <= 0:
+                return {"transcripts": [], "total": total}
+
+            sample = duck.reservoir_sample(sample_n) if sample_n < total else ""
+            df = conn.execute(
+                f"SELECT * FROM (SELECT {select} FROM {src} {where}) {sample}",
+                params,
+            ).df()
+
+        ps = self.pixel_size
+        df["x_location"] = df["x_location"] / ps
+        df["y_location"] = df["y_location"] / ps
+        return {"transcripts": duck.to_records(df), "total": total}
 
     # ── Cells ─────────────────────────────────────────────────────────────────
 
@@ -156,34 +202,85 @@ class XeniumReader(SpatialDatasetReader):
 
     # ── Cell boundaries ───────────────────────────────────────────────────────
 
-    def cell_boundaries(self, bbox: Optional[tuple] = None, fraction: float = 1.0) -> dict:
-        df = self._read_parquet("cell_boundaries.parquet")
-        if df is None:
+    def cell_boundaries(self, bbox: Optional[tuple] = None, fraction: float = 1.0,
+                        cell_ids: Optional[set] = None) -> dict:
+        """Cell polygon vertices in pixel space for cells visible in the bbox.
+
+        Selection is per *cell*, not per vertex. A cell qualifies if any one of its
+        vertices falls in the bbox, and then **all** of its vertices are returned.
+        That matters at the viewport edge: filtering vertices directly (the previous
+        behaviour) clipped boundary cells into partial polygons that rendered as
+        torn shapes. Sampling likewise draws whole cells, so a sampled cell is never
+        missing part of its outline.
+
+        ``cell_ids`` narrows the query to a metadata-filtered subset (issue #45).
+        It joins in the same WHERE clause as the bbox, so it applies before both
+        the count and the sample — filtering to a rare cluster isolates it rather
+        than thinning it.
+
+        ``total`` is the number of distinct cells touching the bbox before sampling —
+        ``useCellBoundaries`` divides its ~5K target by this to pick the next fraction,
+        so it has to stay a pre-sample count.
+        """
+        path = self.path / "cell_boundaries.parquet"
+        if not path.exists():
             return {"boundaries": [], "total": 0}
-        x_col = next((c for c in df.columns if "vertex_x" in c), None)
-        y_col = next((c for c in df.columns if "vertex_y" in c), None)
-        if bbox and x_col and y_col:
-            xmin, ymin, xmax, ymax = self._bbox_to_native(bbox)
-            if None not in (xmin, ymin, xmax, ymax):
-                df = df[
-                    (df[x_col] >= xmin) & (df[x_col] <= xmax) &
-                    (df[y_col] >= ymin) & (df[y_col] <= ymax)
-                ]
-        total_cells = 0
-        if "cell_id" in df.columns:
-            unique_ids = df["cell_id"].drop_duplicates()
-            total_cells = len(unique_ids)
+        if cell_ids is not None and not cell_ids:
+            return {"boundaries": [], "total": 0}
+
+        cols = duck.columns(path)
+        x_col = next((c for c in cols if "vertex_x" in c), None)
+        y_col = next((c for c in cols if "vertex_y" in c), None)
+        if not x_col or not y_col or "cell_id" not in cols:
+            return {"boundaries": [], "total": 0}
+        path = spatial_cache.sorted_path(path, self.path, x_col, y_col) or path
+
+        bbox_sql, bbox_params = duck.bbox_predicate(
+            x_col, y_col, self._bbox_to_native(bbox) if bbox else None
+        )
+        src = duck.scan(path)
+        select = f'"cell_id", "{x_col}", "{y_col}"'
+
+        with duck.connect() as conn:
+            filter_sql = ""
+            if cell_ids is not None:
+                filter_sql = f'CAST("cell_id" AS VARCHAR) {duck.register_ids(conn, cell_ids)}'
+            where = duck.where_clause([bbox_sql, filter_sql])
+            total = conn.execute(
+                f"SELECT COUNT(DISTINCT cell_id) FROM {src} {where}", bbox_params
+            ).fetchone()[0]
+            total = int(total or 0)
+            if total == 0:
+                return {"boundaries": [], "total": 0}
+
             fraction = max(0.0001, min(1.0, fraction))
-            sample_n = round(fraction * total_cells)
-            if sample_n < total_cells:
-                keep = unique_ids.sample(n=sample_n, random_state=42)
-                df = df[df["cell_id"].isin(keep)]
-        df = df.copy()
-        if x_col:
-            df[x_col] = df[x_col] / self.pixel_size
-        if y_col:
-            df[y_col] = df[y_col] / self.pixel_size
-        return {"boundaries": self._to_records(df), "total": total_cells}
+            sample_n = round(fraction * total)
+            if sample_n <= 0:
+                return {"boundaries": [], "total": total}
+
+            # Resolve the visible cell ids first, sample among them, then fetch
+            # every vertex belonging to a surviving id. The second scan re-reads
+            # the parquet, but both scans are predicate-pushed and together still
+            # read far less than materializing the whole file.
+            sample = duck.reservoir_sample(sample_n) if sample_n < total else ""
+            df = conn.execute(
+                f"""
+                WITH visible AS (
+                    SELECT DISTINCT cell_id FROM {src} {where}
+                ),
+                keep AS (
+                    SELECT cell_id FROM visible {sample}
+                )
+                SELECT {select} FROM {src}
+                WHERE cell_id IN (SELECT cell_id FROM keep)
+                """,
+                bbox_params,
+            ).df()
+
+        ps = self.pixel_size
+        df[x_col] = df[x_col] / ps
+        df[y_col] = df[y_col] / ps
+        return {"boundaries": duck.to_records(df), "total": total}
 
     # ── Expression ────────────────────────────────────────────────────────────
 
@@ -232,10 +329,14 @@ class XeniumReader(SpatialDatasetReader):
         mode: str,
         field: Optional[str] = None,
         genes: Optional[list[str]] = None,
+        categorical: Optional[bool] = None,
     ) -> dict:
         if mode == "gene_set":
             return self._color_values_gene_set(genes or [])
-        return self._color_values_meta(field or "")
+        return self._color_values_meta(field or "", categorical)
+
+    def _metadata_frame(self):
+        return self._cells_full()
 
     def _color_values_gene_set(self, genes: list[str]) -> dict:
         h5 = self.path / "cell_feature_matrix.h5"
@@ -265,139 +366,25 @@ class XeniumReader(SpatialDatasetReader):
         except Exception:
             return {"type": "continuous", "values": {}, "min": 0.0, "max": 0.0}
 
-    def _color_values_meta(self, field: str) -> dict:
-        df = self._cells_full()
-        if df is None or field not in df.columns:
-            return {"type": "continuous", "values": {}, "min": 0.0, "max": 0.0}
-        col = df[field]
-        cell_ids = df["cell_id"].astype(str).tolist()
-        has_value = col.notna()
-        is_categorical = (
-            pd.api.types.is_string_dtype(col) or
-            pd.api.types.is_object_dtype(col) or
-            (pd.api.types.is_integer_dtype(col) and col.nunique() <= 30)
-        )
-        if is_categorical:
-            categories = sorted(col[has_value].astype(str).unique().tolist())
-            values = {
-                cell_ids[i]: str(col.iloc[i])
-                for i in range(len(cell_ids)) if has_value.iloc[i]
-            }
-            return {"type": "categorical", "values": values, "categories": categories}
-        valid = col[has_value]
-        if valid.empty:
-            return {"type": "continuous", "values": {}, "min": 0.0, "max": 0.0}
-        values = {
-            cell_ids[i]: float(col.iloc[i])
-            for i in range(len(cell_ids)) if has_value.iloc[i]
-        }
-        return {"type": "continuous", "values": values,
-                "min": float(valid.min()), "max": float(valid.max())}
-
     # ── Supplemental metadata ─────────────────────────────────────────────────
+    # The loader itself lives on SpatialDatasetReader so every platform gets it.
+    # All Xenium contributes is the list of its own root CSVs to ignore.
 
     # Plain-CSV filenames in the dataset root that are standard Xenium outputs.
     # .csv.gz files are always skipped at root (exclusively Xenium data files).
-    _XENIUM_ROOT_SKIP = frozenset({
+    _ROOT_CSV_SKIP = frozenset({
         "cells.csv", "transcripts.csv", "metrics_summary.csv",
         "analysis_summary.csv", "gene_panel.csv",
     })
-
-    def _load_supplemental_metadata(self) -> Optional[pd.DataFrame]:
-        """
-        Merge user-defined cell metadata from:
-          1. {dataset}/cell-metadata/  — all CSV / parquet
-          2. {dataset}/               — plain .csv only, skipping known Xenium filenames
-        Multiple files are outer-joined on cell_id.  Cached per reader instance.
-        """
-        if self._supp_meta is not _UNSET:
-            return self._supp_meta  # type: ignore[return-value]
-
-        candidate_files: list[Path] = []
-        meta_dir = self.path / "cell-metadata"
-        if meta_dir.is_dir():
-            candidate_files.extend(sorted(meta_dir.iterdir()))
-        for f in sorted(self.path.iterdir()):
-            if not f.is_file():
-                continue
-            nl = f.name.lower()
-            if not nl.endswith(".csv"):
-                continue
-            if nl in self._XENIUM_ROOT_SKIP:
-                continue
-            candidate_files.append(f)
-
-        frames: list[pd.DataFrame] = []
-        for f in candidate_files:
-            try:
-                nl = f.name.lower()
-                if nl.endswith(".parquet"):
-                    df = pd.read_parquet(f)
-                    if "cell_id" not in df.columns:
-                        print(f"[xenium_reader] skip {f.name}: no 'cell_id' column")
-                        continue
-                elif nl.endswith(".csv.gz") or nl.endswith(".csv"):
-                    df = self._read_csv_with_barcodes(f)
-                    if df is None:
-                        continue
-                else:
-                    continue
-                df["cell_id"] = df["cell_id"].astype(str)
-                frames.append(df)
-                print(f"[xenium_reader] loaded supplemental metadata: {f.name} "
-                      f"({len(df)} rows, {len(df.columns)-1} extra columns)")
-            except Exception as exc:
-                print(f"[xenium_reader] warning: could not load {f.name}: {exc}")
-
-        if not frames:
-            self._supp_meta = None
-            return None
-
-        merged = frames[0]
-        for frame in frames[1:]:
-            new_cols = ["cell_id"] + [c for c in frame.columns if c not in merged.columns]
-            merged = merged.merge(frame[new_cols], on="cell_id", how="outer")
-        self._supp_meta = merged
-        return merged
-
-    def _read_csv_with_barcodes(self, path: Path) -> Optional[pd.DataFrame]:
-        """Read a CSV and promote the barcode column to 'cell_id'."""
-        try:
-            df = pd.read_csv(path, index_col=0)
-            df.index.name = "cell_id"
-            return df.reset_index()
-        except Exception:
-            pass
-        df = pd.read_csv(path)
-        if "cell_id" in df.columns:
-            return df
-        if "Unnamed: 0" in df.columns:
-            return df.rename(columns={"Unnamed: 0": "cell_id"})
-        first = df.columns[0]
-        if df[first].dtype == object and df[first].is_unique:
-            return df.rename(columns={first: "cell_id"})
-        print(f"[xenium_reader] skip {path.name}: cannot identify barcode column")
-        return None
 
     def _cells_full(self) -> Optional[pd.DataFrame]:
         """cells.parquet merged with supplemental metadata. Cached."""
         if self._cells_full_cache is not _UNSET:
             return self._cells_full_cache  # type: ignore[return-value]
-        cells = self._read_parquet("cells.parquet")
-        supp = self._load_supplemental_metadata()
-        if cells is None and supp is None:
-            self._cells_full_cache = None
-            return None
-        if supp is None:
-            self._cells_full_cache = cells
-            return cells
-        if cells is None:
-            self._cells_full_cache = supp
-            return supp
-        new_cols = [c for c in supp.columns if c not in cells.columns]
-        merged = cells.merge(supp[["cell_id"] + new_cols], on="cell_id", how="left") if new_cols else cells
-        self._cells_full_cache = merged
-        return merged
+        self._cells_full_cache = self._merge_supplemental(
+            self._read_parquet("cells.parquet")
+        )
+        return self._cells_full_cache  # type: ignore[return-value]
 
     # ── Internal helpers ──────────────────────────────────────────────────────
 

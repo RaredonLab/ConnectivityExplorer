@@ -37,6 +37,10 @@ const DEFAULT_AUTOCRINE_COLOR = [255, 150, 0, 200];
 
 const VIEW_ID = "main";
 
+// Matches pyramid.BLANK_IMAGE_NAME: the placeholder canvas served for datasets
+// with no morphology of their own. Not a real image, so it is not shown as one.
+const BLANK_IMAGE_NAME = "__blank__";
+
 // ── Rotation helpers (pure, module-level) ─────────────────────────────────
 
 /**
@@ -125,7 +129,7 @@ function ViewerPanel({ panelIndex }) {
     cellColorEnabled, colorBy, cellColorPalette, categoryColorOverrides,
     allGenes, selectedGenes, transcriptColorOverrides,
     selectedCell, setSelectedCell,
-    edgeMinStrength, edgeDensity,
+    edgeMinStrength, edgeDensity, edgeFile,
     edgeColorBy, edgeColorPalette, edgeDirectional, showAutocrine,
     edgeWidth, showArrowheads, arrowStyle, arrowheadScale,
     edgeOffset,
@@ -134,6 +138,7 @@ function ViewerPanel({ panelIndex }) {
     selectedEdge, setSelectedEdge,
     setCellColorRange, setEdgeColorRange,
     cellColorClamp, edgeColorClamp, setEdgeColorClamp,
+    categoricalOverrides, cellFilter, edgeFilter, setCellColorType,
     annotationMode,
     pixelSize, setPixelSize,
     clearZoomMatch,
@@ -226,6 +231,9 @@ function ViewerPanel({ panelIndex }) {
       viewerRef.current.destroy();
       viewerRef.current = null;
     }
+    // activeImage is null between a dataset switch and DatasetPicker resolving the
+    // new dataset's image list. Opening OSD here would request "null.dzi".
+    if (!dataset || !activeImage) return;
 
     const viewer = OpenSeadragon({
       element: containerRef.current,
@@ -530,7 +538,8 @@ function ViewerPanel({ panelIndex }) {
     total: cellBoundaryTotal,
     loading: cellBoundariesLoading,
   } = useCellBoundaries(
-    apiBase, dataset, viewport, imageSize, cellSegmentsVisible && hasBoundaries, cellBoundaryFraction
+    apiBase, dataset, viewport, imageSize, cellSegmentsVisible && hasBoundaries,
+    cellBoundaryFraction, cellFilter
   );
   useEffect(() => { cellPolygonsRef.current = cellPolygons; }, [cellPolygons]);
 
@@ -541,20 +550,38 @@ function ViewerPanel({ panelIndex }) {
 
   const { edges, loading: edgesLoading } = useEdges(
     apiBase, dataset, viewport, imageSize, edgesVisible || tissueGraphVisible,
-    edgeMinStrength, hiddenLrms, lrmCatalogue, edgeDensity
+    edgeMinStrength, hiddenLrms, lrmCatalogue, edgeDensity, edgeFile,
+    cellFilter, edgeFilter
   );
 
-  const { colorValues, vmin: cellVmin, vmax: cellVmax, loading: cellColorsLoading } = useCellColors(
-    apiBase, dataset, colorBy, allGenes, selectedGenes, cellColorPalette, cellColorEnabled, cellColorClamp, categoryColorOverrides
+  // Explicit categorical/continuous choice for the active color-by column, or
+  // null (auto-detect) when the user has not overridden it — issue #35.
+  const cellCategorical = categoricalOverrides[`cell::${colorBy?.field}`] ?? null;
+  const edgeCategorical = categoricalOverrides[`edge::${edgeColorBy?.field}`] ?? null;
+
+  const {
+    colorValues, vmin: cellVmin, vmax: cellVmax,
+    type: cellType, categories: cellCategories, loading: cellColorsLoading,
+  } = useCellColors(
+    apiBase, dataset, colorBy, allGenes, selectedGenes, cellColorPalette,
+    cellColorEnabled, cellColorClamp, categoryColorOverrides, cellCategorical
   );
   // Only update shared store ranges from panel 0 to avoid redundant updates
   useEffect(() => {
     if (panelIndex === 0) setCellColorRange(cellVmin, cellVmax);
   }, [cellVmin, cellVmax]); // eslint-disable-line
 
+  // The backend is the authority on whether a column is categorical, so report
+  // the type it actually returned rather than letting the panel re-derive it
+  // from the schema dtype — the two disagreed for low-cardinality integers.
+  useEffect(() => {
+    if (panelIndex === 0) setCellColorType(cellType, cellCategories);
+  }, [cellType, cellCategories]); // eslint-disable-line
+
   const edgeColorEnabled = edgeColorBy.mode !== "default";
   const { colorValues: edgeColorValues, vmin: edgeVmin, vmax: edgeVmax, p95: edgeP95, loading: edgeColorsLoading } = useEdgeColors(
-    apiBase, dataset, edgeColorBy, hiddenLrms, lrmCatalogue, edgeColorPalette, edgeColorEnabled, edgeColorClamp, edges
+    apiBase, dataset, edgeColorBy, hiddenLrms, lrmCatalogue, edgeColorPalette,
+    edgeColorEnabled, edgeColorClamp, edges, edgeFile, edgeCategorical
   );
   useEffect(() => {
     if (panelIndex === 0) setEdgeColorRange(edgeVmin, edgeVmax);
@@ -1011,6 +1038,7 @@ function ViewerPanel({ panelIndex }) {
           apiBase={apiBase}
           dataset={dataset}
           edgeId={selectedEdge}
+          edgeFile={edgeFile}
           onClose={() => setSelectedEdge(null)}
         />
       )}
@@ -1024,7 +1052,7 @@ function ViewerPanel({ panelIndex }) {
           pointerEvents: "none",
         }}
       >
-        {dataset} / {activeImage}
+        {dataset}{activeImage && activeImage !== BLANK_IMAGE_NAME ? ` / ${activeImage}` : ""}
         {panelCount >= 2 && (
           <span style={{ marginLeft: 6, color: "#555" }}>· panel {panelIndex + 1}</span>
         )}
