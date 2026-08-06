@@ -55,6 +55,7 @@ class CosMxReader(SpatialDatasetReader):
     def __init__(self, dataset_path: Path):
         super().__init__(dataset_path)
         self._cells_cache: Optional[pd.DataFrame] = None
+        self._origin_cache: Optional[tuple] = None
 
     # ── Identity ──────────────────────────────────────────────────────────────
 
@@ -123,8 +124,11 @@ class CosMxReader(SpatialDatasetReader):
                 "y_global_px": "y_location",
                 "target": "feature_name",
             })
+            x0, y0 = self._origin()
+            df["x_location"] = df["x_location"] - x0
+            df["y_location"] = df["y_location"] - y0
             if bbox:
-                # bbox is in pixel space; CosMx coords are already in pixels
+                # bbox arrives in the shifted frame, matching what cells report.
                 xmin, ymin, xmax, ymax = bbox
                 df = df[
                     (df["x_location"] >= xmin) & (df["x_location"] <= xmax) &
@@ -181,9 +185,10 @@ class CosMxReader(SpatialDatasetReader):
                 print("[cosmx] no CenterX/Y_global_px in metadata; cannot place cells")
                 return None
 
+        x0, y0 = self._origin()
         out = pd.DataFrame({
-            "x_centroid": df[xc].astype(float),
-            "y_centroid": df[yc].astype(float),
+            "x_centroid": df[xc].astype(float) - x0,
+            "y_centroid": df[yc].astype(float) - y0,
         })
         if cols.get("cell"):                       # study-wide unique id
             out.insert(0, "cell_id", df[cols["cell"]].astype(str))
@@ -205,6 +210,45 @@ class CosMxReader(SpatialDatasetReader):
 
         self._cells_cache = self._merge_supplemental(out)
         return self._cells_cache
+
+    def _origin(self) -> tuple:
+        """(x0, y0) subtracted from every coordinate, in global pixels.
+
+        CosMx global pixel coordinates are in the slide frame, so a run can start
+        tens of thousands of pixels from the origin and extend to negative values
+        where the FOV grid runs above it — the mouse-brain set spans
+        x 128749..175643, y -9980..15588.
+
+        TissuePlex's contract is image pixel space, and CosMx exports carry no
+        morphology image to define that space. With no external frame, the only
+        sensible origin is the data's own corner, so the whole dataset is shifted
+        to start at (0, 0). Without this the placeholder canvas would have to span
+        from the slide origin, leaving 43% of cells at negative coordinates and
+        off the canvas entirely.
+
+        Cells, transcripts and boundaries all subtract the same value, so they
+        stay registered with each other.
+        """
+        if self._origin_cache is not None:
+            return self._origin_cache
+        self._origin_cache = (0.0, 0.0)
+        meta = self._find_file("*_metadata_file.csv") or self._find_file("metadata_file.csv")
+        if meta is not None:
+            try:
+                cols = {c.lower(): c for c in duck.csv_columns(meta)}
+                xc, yc = cols.get("centerx_global_px"), cols.get("centery_global_px")
+                if xc and yc:
+                    with duck.connect() as conn:
+                        x0, y0 = conn.execute(
+                            f'SELECT MIN("{xc}"), MIN("{yc}") FROM {duck.scan_csv(meta)}'
+                        ).fetchone()
+                    if x0 is not None and y0 is not None:
+                        # Leave a small margin so units on the edge are not flush
+                        # against the canvas border.
+                        self._origin_cache = (float(x0) - 50.0, float(y0) - 50.0)
+            except Exception as exc:
+                print(f"[cosmx] could not determine coordinate origin: {exc}")
+        return self._origin_cache
 
     def _fov_offsets(self):
         """{'x': {fov: x0}, 'y': {fov: y0}} from the FOV positions file, or None."""
@@ -280,9 +324,15 @@ class CosMxReader(SpatialDatasetReader):
         src = duck.scan_csv(path)
         key = (f'CAST("fov" AS VARCHAR) || \'_\' || CAST("{id_col}" AS VARCHAR)'
                if has_fov else f'CAST("{id_col}" AS VARCHAR)')
-        sql, params = duck.bbox_predicate(
-            "x_global_px", "y_global_px",
-            self._bbox_to_native(bbox) if bbox else None)
+        # The incoming bbox is in the shifted frame that cells() reports, but the
+        # CSV holds raw slide-frame global pixels — so shift the bbox back before
+        # filtering. Note CosMx coordinates are already pixels, so _bbox_to_native
+        # (which multiplies by pixel_size for micron platforms) must NOT be used.
+        native_bbox = None
+        if bbox and None not in bbox:
+            x0, y0 = self._origin()
+            native_bbox = (bbox[0] + x0, bbox[1] + y0, bbox[2] + x0, bbox[3] + y0)
+        sql, params = duck.bbox_predicate("x_global_px", "y_global_px", native_bbox)
 
         with duck.connect() as conn:
             if sql:
@@ -321,8 +371,10 @@ class CosMxReader(SpatialDatasetReader):
                     keep = {ids[i] for i in _np.linspace(0, len(ids) - 1, n).astype(int)}
                     df = df[df["cell_id"].isin(keep)]
 
-        ps = self.pixel_size
+        x0, y0 = self._origin()
         df = df.rename(columns={"x_global_px": "vertex_x", "y_global_px": "vertex_y"})
+        df["vertex_x"] = df["vertex_x"] - x0
+        df["vertex_y"] = df["vertex_y"] - y0
         # Global pixels are the platform's native frame, and TissuePlex serves
         # image pixels — but the base contract divides by pixel_size, so these
         # are already in the right space and pass through unchanged.

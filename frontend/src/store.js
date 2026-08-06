@@ -297,3 +297,6 @@ export const useStore = create((set, get) => ({
       return { selectedGenes: next };
     }),
 }));
+
+// Dev-only handle for debugging from the browser console.
+if (typeof window !== "undefined" && import.meta.env?.DEV) window.__tpStore = useStore;

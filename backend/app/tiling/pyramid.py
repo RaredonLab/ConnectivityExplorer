@@ -55,6 +55,49 @@ def ensure_pyramid(dataset_path: Path, image_name: str) -> dict:
         return {"status": "error", "message": str(exc)}
 
 
+# Reserved image name for datasets with no morphology of their own. The viewer
+# takes its coordinate space from the tile pyramid, so a dataset without an image
+# would render nothing at all — this gives deck.gl a canvas to draw onto.
+BLANK_IMAGE_NAME = "__blank__"
+
+# Uniform fill for that canvas: dark enough that cell outlines and edges read
+# against it, light enough to distinguish from empty viewer background.
+_BLANK_LEVEL = 26
+
+
+def ensure_blank_pyramid(dataset_path: Path, width: int, height: int) -> dict:
+    """Create a placeholder pyramid of the given size, if not already cached.
+
+    No tiles are generated. A blank pyramid is uniform, so one 256×256 tile is
+    written and `get_tile_path` returns it for every level/column/row. At CosMx
+    scale — roughly 47000 × 25000 px — materialising real tiles would mean tens
+    of thousands of identical files for no benefit.
+    """
+    width = max(1, int(width))
+    height = max(1, int(height))
+    out_dir = _pyramid_root(dataset_path, BLANK_IMAGE_NAME)
+    dzi_file = out_dir / f"{BLANK_IMAGE_NAME}.dzi"
+    tile = out_dir / "blank_tile.jpeg"
+
+    if dzi_file.exists() and tile.exists():
+        try:
+            d = get_dzi_descriptor(dataset_path, BLANK_IMAGE_NAME)
+            if (d["Size"]["Width"], d["Size"]["Height"]) == (width, height):
+                return {"status": "ready", "path": str(dzi_file)}
+        except Exception:
+            pass  # stale or unreadable → rewrite below
+
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        Image.new("L", (TILE_SIZE, TILE_SIZE), _BLANK_LEVEL).save(
+            tile, quality=JPEG_QUALITY)
+        _write_dzi_xml(out_dir, BLANK_IMAGE_NAME, width, height)
+        return {"status": "ready", "path": str(dzi_file)}
+    except Exception as exc:
+        shutil.rmtree(out_dir, ignore_errors=True)
+        return {"status": "error", "message": str(exc)}
+
+
 def get_dzi_descriptor(dataset_path: Path, image_name: str) -> dict:
     """Return the DZI descriptor as a dict."""
     dzi_file = _pyramid_root(dataset_path, image_name) / f"{image_name}.dzi"
@@ -82,6 +125,10 @@ def get_dzi_descriptor(dataset_path: Path, image_name: str) -> dict:
 def get_tile_path(
     dataset_path: Path, image_name: str, level: int, col: int, row: int, fmt: str
 ) -> Optional[Path]:
+    if image_name == BLANK_IMAGE_NAME:
+        # One uniform tile answers every request; see ensure_blank_pyramid.
+        tile = _pyramid_root(dataset_path, BLANK_IMAGE_NAME) / "blank_tile.jpeg"
+        return tile if tile.exists() else None
     tile = (
         _pyramid_root(dataset_path, image_name)
         / f"{image_name}_files"

@@ -1,7 +1,7 @@
 {
   "cosmx-mousebrain": {
     "bounds_full": {
-      "digest": "cbd01306dc654d43",
+      "digest": "c363de1ca5bf55b9",
       "keys": [
         "cell_id",
         "vertex_x",
@@ -12,7 +12,7 @@
       "total": 38996
     },
     "bounds_half": {
-      "digest": "82339ef568016f29",
+      "digest": "066cd5973aea3da9",
       "n": 463259,
       "n_cells": 19498,
       "total": 38996
@@ -23,13 +23,13 @@
       "has_transcripts": true,
       "unit_label": "cell"
     },
-    "cell_detail_0": "dfc08311cfef8ffa",
+    "cell_detail_0": "35b7eded5f63108f",
     "cell_expression_0": {
       "digest": "44136fa355b3678a",
       "n": 0
     },
     "cells_all": {
-      "digest": "09f3d77a0f2699d4",
+      "digest": "618f051bcb92242e",
       "keys": [
         "Area",
         "AspectRatio",
@@ -86,12 +86,12 @@
       "type": "continuous"
     },
     "color_meta__x_centroid": {
-      "digest": "4024b276b97c467c",
+      "digest": "22c81b9c2e83431d",
       "n": 38996,
       "type": "continuous"
     },
     "color_meta__y_centroid": {
-      "digest": "c4f0f69c6c783644",
+      "digest": "1da6b332f5e24203",
       "n": 38996,
       "type": "continuous"
     },
@@ -117,7 +117,7 @@
       "total": 0
     },
     "tx_full": {
-      "digest": "2495367c6620489c",
+      "digest": "b76ab16b6333ead5",
       "keys": [
         "feature_name",
         "x_location",
@@ -127,7 +127,7 @@
       "total": 399999
     },
     "tx_gene0": {
-      "digest": "17ff1102f3ee81f9",
+      "digest": "8ff8b70a44b339a1",
       "keys": [
         "feature_name",
         "x_location",

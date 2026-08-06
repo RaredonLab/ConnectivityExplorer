@@ -86,12 +86,21 @@ function DatasetPicker() {
       .then((list) => {
         if (!Array.isArray(list)) return;
         setImages(list);
-        if (list.length > 0 && !list.includes(activeImage)) {
-          setActiveImage(list[0]);
-        }
       })
       .catch(() => setImages([]));
   }, [apiBase, dataset]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Keep activeImage valid for whatever images the current dataset offers.
+  // This is a separate, declarative effect rather than a branch inside the fetch
+  // above because the fetch only re-runs on dataset change: with activeImage
+  // captured in its closure, whether it got set depended on the order the two
+  // state updates landed in, which left datasets whose only image is the
+  // synthesised placeholder with activeImage stuck at null and no viewer at all.
+  useEffect(() => {
+    if (images.length > 0 && !images.includes(activeImage)) {
+      setActiveImage(images[0]);
+    }
+  }, [images, activeImage]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (datasets.length === 0) {
     return (
@@ -135,6 +144,9 @@ export default function LayerPanel() {
   const { platformCapabilities, apiBase } = useStore();
   const hasTranscripts = platformCapabilities?.has_transcripts ?? true;
   const hasBoundaries  = platformCapabilities?.has_boundaries  ?? true;
+  // A dataset with no morphology gets a placeholder canvas, so the opacity
+  // control would be a dead toggle over a flat fill.
+  const hasMorphology  = platformCapabilities?.has_morphology  ?? true;
   const unitLabel      = platformCapabilities?.unit_label ?? "cell";
   const unitTitle      = unitLabel.charAt(0).toUpperCase() + unitLabel.slice(1);
 
@@ -167,7 +179,7 @@ export default function LayerPanel() {
       <div style={{ fontWeight: "bold", marginBottom: 10, fontSize: 13, color: "#fff" }}>Layers</div>
 
       <div style={SECTION_HEADER}>Core</div>
-      <MorphologyRow />
+      {hasMorphology && <MorphologyRow />}
       {hasTranscripts && <TranscriptLayerRow />}
       {hasBoundaries  && <CellSegmentsRow unitTitle={unitTitle} />}
 

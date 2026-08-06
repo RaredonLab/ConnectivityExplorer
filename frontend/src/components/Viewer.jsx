@@ -37,6 +37,10 @@ const DEFAULT_AUTOCRINE_COLOR = [255, 150, 0, 200];
 
 const VIEW_ID = "main";
 
+// Matches pyramid.BLANK_IMAGE_NAME: the placeholder canvas served for datasets
+// with no morphology of their own. Not a real image, so it is not shown as one.
+const BLANK_IMAGE_NAME = "__blank__";
+
 // ── Rotation helpers (pure, module-level) ─────────────────────────────────
 
 /**
@@ -1028,7 +1032,7 @@ function ViewerPanel({ panelIndex }) {
           pointerEvents: "none",
         }}
       >
-        {dataset} / {activeImage}
+        {dataset}{activeImage && activeImage !== BLANK_IMAGE_NAME ? ` / ${activeImage}` : ""}
         {panelCount >= 2 && (
           <span style={{ marginLeft: 6, color: "#555" }}>· panel {panelIndex + 1}</span>
         )}
