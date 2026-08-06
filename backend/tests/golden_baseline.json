@@ -783,7 +783,7 @@
     "pixel_size": 0.2125,
     "platform": "xenium",
     "tx_bbox": {
-      "digest": "958f4de8b1dd19b3",
+      "digest": "bd94661711d7cd2d",
       "keys": [
         "feature_name",
         "qv",
@@ -794,7 +794,7 @@
       "total": 228952
     },
     "tx_bbox_half": {
-      "digest": "cfbe3c924fa10464",
+      "digest": "533e723da47274dc",
       "keys": [
         "feature_name",
         "qv",

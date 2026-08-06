@@ -234,7 +234,7 @@ Tracked in [GitHub issues](https://github.com/RaredonLab/TissuePlex/issues). Cur
 - **[#45](https://github.com/RaredonLab/TissuePlex/issues/45)** — select cells and edges by metadata, so you can focus on a sample or a few cell types instead of the whole dataset
 - **[#35](https://github.com/RaredonLab/TissuePlex/issues/35)** — a "treat as categorical" toggle for numeric metadata columns, so integer-coded cluster IDs get a discrete editable palette instead of a continuous gradient
 
-Also known and not yet addressed: transcript and cell-boundary queries read their full parquet file on every viewport change rather than pushing the bbox filter down to DuckDB the way the edge queries do. This is the main performance limit on very large datasets.
+Large datasets are handled by a spatial index built automatically on first access, alongside the tile pyramid: files over 64 MB are rewritten sorted by a spatial grid, which makes viewport queries roughly 27× faster on a 40M-row transcript file and also converts seqFISH CSV to parquet along the way. Set `SPATIAL_CACHE=0` to disable it.
 
 ---
 

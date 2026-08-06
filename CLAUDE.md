@@ -118,6 +118,7 @@ backend/
       seqfish_reader.py      seqFISH / Spatial Genomics GenePS; v2 full, v1 partial.
                              Mixed µm/pixel coordinate handling — see its own section.
       duck.py                Shared DuckDB query helpers used by the spatial readers
+      spatial_cache.py       Spatially-sorted parquet cache (build on first access)
       visium_hd_reader.py    Visium HD implementation — bins as points; partial (see status above)
       merscope_reader.py     MERSCOPE implementation (inherits SpatialDatasetReader)
       cosmx_reader.py        CosMx implementation (inherits SpatialDatasetReader)
@@ -714,6 +715,51 @@ because the file is not spatially sorted (see What's Not Built Yet #1) — pruni
 skip anything, so it pays predicate-evaluation cost without the row-group savings. Fixing
 the layout closes that gap and then some.
 
+### Spatial index cache (readers/spatial_cache.py)
+
+Streaming fixed memory but not speed, because the bbox predicate could not prune:
+Xenium writes `transcripts.parquet` in acquisition order with huge row groups (the
+bundled breast dataset is 1.1M rows in **2** row groups, the first spanning the whole
+x-range), so statistics exclude nothing.
+
+`spatial_cache.sorted_path()` rewrites the file sorted by a coarse spatial grid with
+100K-row row groups, cached on disk and rebuilt when the source changes — the same
+"derive an artifact on first access" pattern `ensure_pyramid` uses. Measured:
+
+| Path | uncached | cached | |
+|---|---|---|---|
+| Xenium transcripts (600 MB, 40M rows) | 1180 ms | **44 ms** | 27× |
+| seqFISH transcripts (229 MB CSV, 8M rows) | 1595 ms | **156 ms** | 10× |
+| Xenium boundaries (40 MB, 3.6M vertices) | 102 ms | 73 ms | 1.4× |
+
+Boundaries gain least by design: half that query is a `cell_id` semi-join to pull whole
+polygons, which spatial sorting cannot help. For seqFISH the cache also converts CSV to
+parquet, which is why it helps a format that cannot be range-scanned at all.
+
+Four things to know:
+
+- **`bbox_predicate()` inlines the bounds as SQL literals, and that is load-bearing.**
+  DuckDB prunes row groups at plan time; with `?` parameters the values are unknown then,
+  so it cannot prune. Measured on the sorted file: COUNT 6.8 ms with literals vs 155 ms
+  bound; SELECT 35 ms vs 321 ms. On an unsorted file the two are identical, which is why
+  this only started to matter once the cache existed. Inlining is safe because every value
+  goes through `float()` and non-finite values are rejected — string filters such as gene
+  names still go through `in_predicate()`. `edge_reader.py` still binds its bbox; that
+  costs nothing today because edge parquet is unsorted, but it would have to change before
+  an edge spatial index would pay off.
+- **Small files are skipped** (`SPATIAL_CACHE_MIN_BYTES`, default 64 MB). Below that the
+  build cost and extra disk are not repaid. This also keeps the bundled sample datasets
+  uncached, so the golden baseline does not depend on whether a cache happens to exist.
+- **A failed build returns None and the query uses the source file**, so indexing can
+  never make a dataset unreadable. `SPATIAL_CACHE=0` disables it entirely.
+- **Cache validity covers the sort columns, not just the source stamp.** The cache
+  filename derives from the source stem alone, so without that check a file sorted on one
+  column pair would be served for a query on another — sorted by the wrong axis, silently.
+
+Row *order* differs between a sorted file and its source, so seeded reservoir sampling
+draws a different subset. Totals and filter results are unaffected; it is only why
+enabling the cache moves the sampled golden probes.
+
 Things to preserve when editing these methods:
 
 - **`total` is a pre-sample count.** Both endpoints return `{rows, total}` where `total` is
@@ -817,6 +863,10 @@ output folder under `DATA_PATH` — TissuePlex auto-detects the platform on firs
 Tuning knobs live in a `.env.prod` file that is gitignored and must be created by hand;
 `DUCKDB_MEMORY_LIMIT` is the one to reach for if the backend OOMs on large edge files.
 
+Other env knobs: `SPATIAL_CACHE=0` disables the spatial index entirely,
+`SPATIAL_CACHE_MIN_BYTES` (default 64 MB) sets the size below which files are left alone,
+and `CACHE_DIR` relocates both the DZI pyramids and the spatial index off the data volume.
+
 **Access control is opt-in and off by default.** The Caddyfile supports `basicauth`, but
 unless it is enabled anyone with the URL can view the data. There is no application-level
 auth, no user accounts, and no per-dataset permissions.
@@ -900,20 +950,12 @@ which it does not cover at all.
 
 ## What's Not Built Yet
 
-1. **Spatial queries are not yet spatially indexed.** `transcripts()` and
-   `cell_boundaries()` now stream through DuckDB (see the Spatial Query Path section),
-   which fixed the memory problem, but **row-group pruning does not currently help**:
-   Xenium writes `transcripts.parquet` in row order, not spatial order, with very large
-   row groups. Measured on the bundled breast dataset — 1.1M rows in **2** row groups,
-   the first spanning the entire x-range. DuckDB therefore still scans every row to
-   evaluate the bbox predicate.
-
-   Sorting the file spatially and rewriting it with small row groups makes the statistics
-   selective and is dramatically faster. Measured on a synthetic 40M-row / 0.78 GB file,
-   zoomed-in viewport query: **COUNT 206 ms → 9 ms, SELECT 1010 ms → 29 ms**, for a
-   one-time 4.1 s sort. That is the natural next step, and it fits the existing
-   "build a derived artifact on first access and cache it" pattern that `ensure_pyramid`
-   already uses for tiles.
+1. **Edge queries are not spatially indexed.** `transcripts()` and `cell_boundaries()`
+   now go through `spatial_cache` (see the Spatial Query Path section), but `EdgeReader`
+   does not. Two things would need to change: sort `edges.parquet` on `x1`/`y1`, and stop
+   binding its bbox as `?` parameters, which defeats row-group pruning. Less urgent than
+   it was for transcripts, because `query_grouped` already collapses the row count
+   server-side.
 
 2. **Supplemental cell metadata is not shown in the cell info panel** — `CellInfoPanel.jsx`
    renders a hardcoded field list (`cell_id`, x, y, `transcript_counts`, `total_counts`,
