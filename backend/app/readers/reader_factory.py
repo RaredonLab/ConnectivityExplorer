@@ -54,7 +54,18 @@ def _is_merscope(path: Path) -> bool:
 
 
 def _is_cosmx(path: Path) -> bool:
-    return any(path.glob("*_tx_file.csv"))
+    # CosMx flat files are normally prefixed with the experiment name, but some
+    # public exports drop the prefix entirely ("metadata_file.csv"), which the
+    # `*_tx_file.csv` glob cannot match since it requires a literal underscore.
+    # Several sentinels are checked because exports vary in which files ship:
+    # the 2021 NSCLC release has no polygons, and some sets have no tx file.
+    for pat in ("*_tx_file.csv", "tx_file.csv",
+                "*_metadata_file.csv", "metadata_file.csv",
+                "*-polygons.csv", "polygons.csv",
+                "*_exprMat_file.csv", "exprMat_file.csv"):
+        if any(path.glob(pat)):
+            return True
+    return False
 
 
 def _is_seqfish(path: Path) -> bool:

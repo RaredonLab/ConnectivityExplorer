@@ -120,6 +120,17 @@ def list_images(dataset: str):
 
     # Morphology variants first, then alphabetical
     names.sort(key=lambda n: (not n.startswith("morphology"), n))
+
+    if not names:
+        # No morphology of its own. The viewer takes its coordinate space from the
+        # tile pyramid, so without an image nothing renders at all — offer a
+        # placeholder canvas sized to the data instead of an empty list.
+        from app.tiling.pyramid import BLANK_IMAGE_NAME
+        try:
+            if _reader(dataset).data_extent() is not None:
+                names.append(BLANK_IMAGE_NAME)
+        except Exception:
+            pass
     return names
 
 

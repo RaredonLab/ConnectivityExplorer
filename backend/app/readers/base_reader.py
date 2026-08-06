@@ -160,6 +160,29 @@ class SpatialDatasetReader(ABC):
             "unit_label": "cell",
         }
 
+    def data_extent(self) -> Optional[tuple]:
+        """Bounding box of this dataset's units in image pixel space.
+
+        Used to size a placeholder canvas for datasets that ship no morphology
+        image — the viewer derives its whole coordinate space from the tile
+        pyramid, so without one there is nothing for deck.gl to draw onto.
+
+        Returns (xmin, ymin, xmax, ymax), or None when there is nothing to
+        measure. The default reads centroids from `cells()`; a reader with a
+        cheaper source should override.
+        """
+        try:
+            cells = self.cells()
+        except Exception:
+            return None
+        xs = [c["x_centroid"] for c in cells
+              if c.get("x_centroid") is not None and math.isfinite(c["x_centroid"])]
+        ys = [c["y_centroid"] for c in cells
+              if c.get("y_centroid") is not None and math.isfinite(c["y_centroid"])]
+        if not xs or not ys:
+            return None
+        return (min(xs), min(ys), max(xs), max(ys))
+
     # ── Supplemental cell metadata (platform-agnostic) ────────────────────────
     #
     # Users add their own per-cell columns (clusters, pseudotime, phenotype calls)
