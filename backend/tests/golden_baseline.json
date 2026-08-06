@@ -73,6 +73,13 @@
         "y_centroid": "float64"
       }
     },
+    "color_forced_cat__fov": {
+      "categories_digest": "5d0026d09770336c",
+      "digest": "8e360a57101220c4",
+      "n": 38996,
+      "n_categories": 66,
+      "type": "categorical"
+    },
     "color_gene_set": {
       "digest": "44136fa355b3678a",
       "max": 0.0,
@@ -201,6 +208,13 @@
         "y_centroid": "float64"
       }
     },
+    "color_forced_cat__volume": {
+      "categories_digest": "5184d74a79a96f9b",
+      "digest": "09e3b3fcdf575db2",
+      "n": 997,
+      "n_categories": 995,
+      "type": "categorical"
+    },
     "color_gene_set": {
       "digest": "0082fee906d39bfe",
       "max": 137.0,
@@ -299,7 +313,7 @@
       "has_transcripts": true,
       "unit_label": "cell"
     },
-    "cell_detail_0": "79d24a3e5b058813",
+    "cell_detail_0": "9f848959f6710dd8",
     "cell_expression_0": {
       "digest": "e4e6708c3bf53c95",
       "n": 3
@@ -337,12 +351,27 @@
         "pseudotime": "float64",
         "region": "object",
         "segmentation_method": "object",
+        "seurat_clusters": "int64",
         "total_counts": "int64",
         "transcript_counts": "int64",
         "unassigned_codeword_counts": "int64",
         "x_centroid": "float64",
         "y_centroid": "float64"
       }
+    },
+    "color_forced_cat__cell_area": {
+      "categories_digest": "03d5cb572a029c51",
+      "digest": "399d4c4dcd1753c0",
+      "n": 36,
+      "n_categories": 36,
+      "type": "categorical"
+    },
+    "color_forced_cont__transcript_counts": {
+      "categories_digest": null,
+      "digest": "0fd6f76f73a915d2",
+      "n": 36,
+      "n_categories": null,
+      "type": "continuous"
     },
     "color_gene_set": {
       "digest": "dc12ce5b5034d05e",
@@ -374,6 +403,24 @@
       "digest": "c92dc2b2c78706bf"
     },
     "edge__edges.parquet__detail0": "b5b16c6db1ee824b",
+    "edge__edges.parquet__filter__interaction_class": {
+      "digest": "868bc3eaf596bf9c",
+      "keys": [
+        "edge",
+        "is_autocrine",
+        "lrm_count",
+        "receiving_cell",
+        "receiving_type",
+        "score_sum",
+        "sending_cell",
+        "sending_type",
+        "x1",
+        "x2",
+        "y1",
+        "y2"
+      ],
+      "n": 176
+    },
     "edge__edges.parquet__grouped": {
       "digest": "74439cac91762e89",
       "keys": [
@@ -432,6 +479,24 @@
       "digest": "519a5ef75304e432"
     },
     "edge__edges__edge.normalized.product.parquet__detail0": "e5a6e867ae7774fa",
+    "edge__edges__edge.normalized.product.parquet__filter__interaction_class": {
+      "digest": "7106481dad64d458",
+      "keys": [
+        "edge",
+        "is_autocrine",
+        "lrm_count",
+        "receiving_cell",
+        "receiving_type",
+        "score_sum",
+        "sending_cell",
+        "sending_type",
+        "x1",
+        "x2",
+        "y1",
+        "y2"
+      ],
+      "n": 176
+    },
     "edge__edges__edge.normalized.product.parquet__grouped": {
       "digest": "60404aba71d2d61d",
       "keys": [
@@ -490,6 +555,24 @@
       "digest": "ea178fdb2da7ef01"
     },
     "edge__edges__edge.raw.minimum.parquet__detail0": "1653c7e83d4142bd",
+    "edge__edges__edge.raw.minimum.parquet__filter__interaction_class": {
+      "digest": "46e42445db77b41e",
+      "keys": [
+        "edge",
+        "is_autocrine",
+        "lrm_count",
+        "receiving_cell",
+        "receiving_type",
+        "score_sum",
+        "sending_cell",
+        "sending_type",
+        "x1",
+        "x2",
+        "y1",
+        "y2"
+      ],
+      "n": 113
+    },
     "edge__edges__edge.raw.minimum.parquet__grouped": {
       "digest": "ba6b68c6da29e63c",
       "keys": [
@@ -540,6 +623,11 @@
       ],
       "n": 155
     },
+    "filter_bounds__transcript_counts": {
+      "n_cells": 19,
+      "total": 19
+    },
+    "filter_ids__transcript_counts": 19,
     "gene_list": {
       "digest": "09d44724709d2b24",
       "n": 5035
@@ -679,6 +767,13 @@
         "y_centroid": "float64"
       }
     },
+    "color_forced_cat__cell_area": {
+      "categories_digest": "240b60589d931fdd",
+      "digest": "cf5a6d01674f343a",
+      "n": 62,
+      "n_categories": 62,
+      "type": "categorical"
+    },
     "color_gene_set": {
       "digest": "90f5d24654cf35e1",
       "max": 69.0,
@@ -802,6 +897,13 @@
         "y_centroid": "float64"
       }
     },
+    "color_forced_cat__cell_area": {
+      "categories_digest": "f49dc022795723e8",
+      "digest": "04b252c1bb65e091",
+      "n": 36,
+      "n_categories": 36,
+      "type": "categorical"
+    },
     "color_gene_set": {
       "digest": "900101042f1887aa",
       "max": 55.0,
@@ -832,6 +934,24 @@
       "digest": "147980b074db33d3"
     },
     "edge__edges.parquet__detail0": "78d7e0433da4808e",
+    "edge__edges.parquet__filter__is_autocrine": {
+      "digest": "99f18f8571d0f208",
+      "keys": [
+        "edge",
+        "is_autocrine",
+        "lrm_count",
+        "receiving_cell",
+        "receiving_type",
+        "score_sum",
+        "sending_cell",
+        "sending_type",
+        "x1",
+        "x2",
+        "y1",
+        "y2"
+      ],
+      "n": 214
+    },
     "edge__edges.parquet__grouped": {
       "digest": "95d8d03ded9a9ecb",
       "keys": [
@@ -982,6 +1102,13 @@
         "y_centroid": "float64"
       }
     },
+    "color_forced_cat__array_row": {
+      "categories_digest": "cb1f070cb9fb1832",
+      "digest": "e2371587c0c48cbc",
+      "n": 20830,
+      "n_categories": 98,
+      "type": "categorical"
+    },
     "color_gene_set": {
       "digest": "654b57fb083efe14",
       "max": 1.0,
@@ -1012,6 +1139,24 @@
       "digest": "d64c43b4d5cff51c"
     },
     "edge__edges.parquet__detail0": "89d54bdc782c25cb",
+    "edge__edges.parquet__filter__is_autocrine": {
+      "digest": "794574a264114c51",
+      "keys": [
+        "edge",
+        "is_autocrine",
+        "lrm_count",
+        "receiving_cell",
+        "receiving_type",
+        "score_sum",
+        "sending_cell",
+        "sending_type",
+        "x1",
+        "x2",
+        "y1",
+        "y2"
+      ],
+      "n": 62680
+    },
     "edge__edges.parquet__grouped": {
       "digest": "8a6fa8e717282f31",
       "keys": [
@@ -1135,6 +1280,20 @@
         "y_centroid": "float64"
       }
     },
+    "color_forced_cat__transcript_counts": {
+      "categories_digest": "0790d6f4f3f4066d",
+      "digest": "1764190c4065b50d",
+      "n": 7275,
+      "n_categories": 422,
+      "type": "categorical"
+    },
+    "color_forced_cont__control_probe_counts": {
+      "categories_digest": null,
+      "digest": "4068afac4f77e1b4",
+      "n": 7275,
+      "n_categories": null,
+      "type": "continuous"
+    },
     "color_gene_set": {
       "digest": "7e62d7c4719e9927",
       "max": 37.0,
@@ -1165,6 +1324,24 @@
       "digest": "f454e9ec05ba3d82"
     },
     "edge__edges.parquet__detail0": "502de7ce02b60495",
+    "edge__edges.parquet__filter__is_autocrine": {
+      "digest": "cb64d837bdcc7877",
+      "keys": [
+        "edge",
+        "is_autocrine",
+        "lrm_count",
+        "receiving_cell",
+        "receiving_type",
+        "score_sum",
+        "sending_cell",
+        "sending_type",
+        "x1",
+        "x2",
+        "y1",
+        "y2"
+      ],
+      "n": 43650
+    },
     "edge__edges.parquet__grouped": {
       "digest": "2587c77fd6f6a1b3",
       "keys": [
@@ -1220,6 +1397,24 @@
       "digest": "f746905c1d52f0aa"
     },
     "edge__edges__niches_rad30.parquet__detail0": "0635850ff026fa23",
+    "edge__edges__niches_rad30.parquet__filter__is_autocrine": {
+      "digest": "1dea970e0700b956",
+      "keys": [
+        "edge",
+        "is_autocrine",
+        "lrm_count",
+        "receiving_cell",
+        "receiving_type",
+        "score_sum",
+        "sending_cell",
+        "sending_type",
+        "x1",
+        "x2",
+        "y1",
+        "y2"
+      ],
+      "n": 174248
+    },
     "edge__edges__niches_rad30.parquet__grouped": {
       "digest": "d2e6d82664d037f3",
       "keys": [
@@ -1267,6 +1462,11 @@
       ],
       "n": 181523
     },
+    "filter_bounds__control_probe_counts": {
+      "n_cells": 7272,
+      "total": 7272
+    },
+    "filter_ids__control_probe_counts": 7272,
     "gene_list": {
       "digest": "bfd0eef30077d962",
       "n": 280

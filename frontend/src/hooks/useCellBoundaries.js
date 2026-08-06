@@ -19,8 +19,30 @@ import { useState, useEffect, useRef } from "react";
 const TARGET_CELLS = 5_000;
 const SEED_TOTAL   = 50_000; // conservative first-probe estimate
 
+/**
+ * Serialise a metadata filter (issue #45) into query params.
+ *
+ * Returns "" when there is nothing to constrain, so the URL is byte-identical to
+ * the pre-filter one and no cached response is missed. The filter is sent to the
+ * server rather than applied to the response because sampling happens server-side:
+ * filtering afterwards would leave a fraction of a fraction on screen.
+ */
+function filterParams(filter) {
+  if (!filter?.field) return "";
+  const p = new URLSearchParams();
+  const hasValues = Array.isArray(filter.values) && filter.values.length > 0;
+  if (!hasValues && filter.min == null && filter.max == null) return "";
+  p.set("filter_field", filter.field);
+  if (hasValues) for (const v of filter.values) p.append("filter_values", v);
+  if (filter.min != null) p.set("filter_min", filter.min);
+  if (filter.max != null) p.set("filter_max", filter.max);
+  if (filter.includeMissing) p.set("filter_missing", "true");
+  return `&${p.toString()}`;
+}
+
 export function useCellBoundaries(
-  apiBase, dataset, viewport, imageSize, enabled = true, fraction = null
+  apiBase, dataset, viewport, imageSize, enabled = true, fraction = null,
+  filter = null
 ) {
   const [cells, setCells]                     = useState([]);
   const [total, setTotal]                     = useState(0);
@@ -30,6 +52,23 @@ export function useCellBoundaries(
   const timerRef    = useRef(null);
   const abortRef    = useRef(null);
   const prevTotalRef = useRef(SEED_TOTAL);   // running estimate of cells in viewport
+
+  // Serialised once so it can be both spliced into the URL and used as an effect
+  // dependency — the filter arrives as an object whose identity changes on every
+  // render, which would otherwise refetch continuously.
+  const filterQS = filterParams(filter);
+
+  // One-shot recalibration.
+  //
+  // In auto mode the fraction is picked from `prevTotalRef`, the total the *last*
+  // fetch saw. Applying a metadata filter (or switching dataset) changes that
+  // total out from under the estimate, and nothing else would trigger another
+  // fetch — so the layer would sit showing a tenth of an already-small subset
+  // until the user happened to pan. Bumping this counter re-runs the fetch once
+  // with the corrected fraction; `calibratedRef` keys it to the current request
+  // so it can converge rather than oscillate.
+  const [recalibrate, setRecalibrate] = useState(0);
+  const calibratedRef = useRef(null);
 
   useEffect(() => {
     if (!enabled || !dataset) {
@@ -62,6 +101,7 @@ export function useCellBoundaries(
         } else {
           url += `?${fracParam}`;
         }
+        url += filterQS;
         const res = await fetch(url, { signal: ctrl.signal });
         if (!res.ok) { setCells([]); setTotal(0); return; }
         const data = await res.json();
@@ -73,6 +113,23 @@ export function useCellBoundaries(
         // Update the running estimate so the next auto fraction is better calibrated
         if (totalCells > 0) prevTotalRef.current = totalCells;
         setTotal(totalCells);
+
+        // If that estimate was badly wrong, correct it now rather than waiting
+        // for the user to pan. Only in auto mode — an explicit slider value is
+        // the user's decision, not an estimate. Once per request key.
+        // The 1.2 threshold is what makes the panel's sample readout honest: the
+        // panel derives its percentage from the *current* total, so anything
+        // looser leaves it advertising a fraction the canvas is not drawing at.
+        // Total is a pre-sample count for a fixed bbox and filter, so the second
+        // fetch computes the same fraction and the loop settles after one pass.
+        if (fraction === null && totalCells > 0) {
+          const better = Math.min(1.0, TARGET_CELLS / totalCells);
+          const key = `${url}|${totalCells}`;
+          if (better > eff * 1.2 && calibratedRef.current !== key) {
+            calibratedRef.current = key;
+            setRecalibrate((c) => c + 1);
+          }
+        }
 
         if (!Array.isArray(rows)) { setCells([]); return; }
 
@@ -94,7 +151,7 @@ export function useCellBoundaries(
     }, 200);
 
     return () => clearTimeout(timerRef.current);
-  }, [apiBase, dataset, viewport?.xmin, viewport?.ymin, viewport?.xmax, viewport?.ymax, enabled, fraction]);
+  }, [apiBase, dataset, viewport?.xmin, viewport?.ymin, viewport?.xmax, viewport?.ymax, enabled, fraction, filterQS, recalibrate]);
 
   // Abort in-flight request on unmount
   useEffect(() => {

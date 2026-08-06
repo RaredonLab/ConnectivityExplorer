@@ -25,6 +25,7 @@ import { geneColor } from "../utils/geneColor";
  * Modes:
  *   gene_set  — POST with selected genes; returns continuous sum
  *   metadata  — POST with field; backend auto-detects continuous vs. categorical
+ *               unless `categorical` overrides it (issue #35)
  *
  * Returns:
  *   colorValues   Map<cell_id, [r,g,b,a]> or null when disabled
@@ -34,7 +35,7 @@ import { geneColor } from "../utils/geneColor";
  *   categoryColors Map<label, [r,g,b,a]> for categorical legend
  *   loading
  */
-export function useCellColors(apiBase, dataset, colorBy, allGenes, selectedGenes, palette, enabled, clamp, categoryColorOverrides) {
+export function useCellColors(apiBase, dataset, colorBy, allGenes, selectedGenes, palette, enabled, clamp, categoryColorOverrides, categorical = null) {
   const [result, setResult] = useState({
     colorValues: null, type: "continuous", vmin: 0, vmax: 0,
     categories: [], categoryColors: new Map(),
@@ -90,7 +91,7 @@ export function useCellColors(apiBase, dataset, colorBy, allGenes, selectedGenes
       try {
         const body = mode === "gene_set"
           ? { mode: "gene_set", genes: genesToSend }
-          : { mode: "metadata", field };
+          : { mode: "metadata", field, categorical };
 
         const res = await fetch(`${apiBase}/spatial/${dataset}/color-values`, {
           method: "POST",
@@ -119,7 +120,7 @@ export function useCellColors(apiBase, dataset, colorBy, allGenes, selectedGenes
       }
     }, 400);
     return () => clearTimeout(timerRef.current);
-  }, [apiBase, dataset, colorBy?.mode, colorBy?.field, allGenes, selectedGenes, enabled]); // eslint-disable-line
+  }, [apiBase, dataset, colorBy?.mode, colorBy?.field, allGenes, selectedGenes, enabled, categorical]); // eslint-disable-line
 
   // ── Effect 2: apply clamp + palette to continuous data (no fetch, no debounce) ──
   // Fires immediately when rawCont, clamp, or palette changes so slider drags

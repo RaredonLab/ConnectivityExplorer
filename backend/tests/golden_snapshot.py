@@ -37,6 +37,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from app.readers.metadata_filter import MetadataFilter  # noqa: E402
+
 DATA_ROOT = Path(__file__).resolve().parent.parent.parent / "sample_data"
 BASELINE = Path(__file__).resolve().parent / "golden_baseline.json"
 
@@ -202,6 +204,68 @@ def probe_spatial(reader, p: Probes) -> None:
             "digest": digest(cvm.get("values")),
         })
 
+    probe_metadata_features(reader, p)
+
+
+def probe_metadata_features(reader, p: Probes) -> None:
+    """Cover the force-categorical override (#35) and the metadata filter (#45).
+
+    Both are driven off the same column list, and the column is chosen by rule
+    rather than hardcoded, so this works on every platform: the first column whose
+    auto-detected type is categorical exercises the filter and the forced-continuous
+    path, and the first continuous one exercises forced-categorical.
+    """
+    df = reader._metadata_frame()
+    if df is None or df.empty or "cell_id" not in df.columns:
+        return
+    # Coordinates are numeric but meaningless to colour by, and forcing one
+    # categorical yields a category per cell — a probe that says nothing and a
+    # baseline entry tens of thousands of labels long.
+    skip = {"cell_id", "x_centroid", "y_centroid"}
+    fields = [c for c in df.columns if c not in skip and df[c].notna().any()]
+
+    cat_field = cont_field = None
+    for f in fields:
+        kind = reader.color_values("metadata", f).get("type")
+        if kind == "categorical" and cat_field is None:
+            cat_field = f
+        elif kind == "continuous" and cont_field is None:
+            cont_field = f
+        if cat_field and cont_field:
+            break
+
+    def summarise(cv):
+        cats = cv.get("categories")
+        return {"type": cv.get("type"), "n": len(cv.get("values", {})),
+                # Count plus digest rather than the list: order is the thing under
+                # test (issue #35's numeric sort), and the digest is order-sensitive.
+                "n_categories": None if cats is None else len(cats),
+                "categories_digest": None if cats is None else digest(cats),
+                "digest": digest(cv.get("values"))}
+
+    if cat_field:
+        # Forcing a categorical column continuous must produce numbers or nothing —
+        # never a silent fallback that colours every unit identically.
+        p.record(f"color_forced_cont__{cat_field}",
+                 lambda: summarise(reader.color_values("metadata", cat_field,
+                                                       categorical=False)))
+        cats = reader.color_values("metadata", cat_field).get("categories") or []
+        if cats:
+            spec = MetadataFilter.build(cat_field, values=cats[:2])
+            ids = reader.filter_cell_ids(spec)
+            p.record(f"filter_ids__{cat_field}", lambda: len(ids))
+            if reader.capabilities().get("has_boundaries", True):
+                b = reader.cell_boundaries(fraction=1.0, cell_ids=ids)
+                p.record(f"filter_bounds__{cat_field}", lambda: {
+                    "total": b.get("total"),
+                    "n_cells": len({r["cell_id"] for r in b["boundaries"]})
+                    if b["boundaries"] else 0,
+                })
+    if cont_field:
+        p.record(f"color_forced_cat__{cont_field}",
+                 lambda: summarise(reader.color_values("metadata", cont_field,
+                                                       categorical=True)))
+
 
 def probe_edges(dataset_dir: Path, pixel_size: float, p: Probes) -> None:
     from app.readers.edge_reader import EdgeReader
@@ -233,6 +297,21 @@ def probe_edges(dataset_dir: Path, pixel_size: float, p: Probes) -> None:
             eid = min(str(g["edge"]) for g in grouped if g.get("edge") is not None)
             p.record(f"edge__{key}__detail0", lambda er=er, eid=eid:
                      digest(er.edge_detail(eid)))
+
+            # Metadata filter on the edge table (#45). The column is picked by rule
+            # so this covers whatever the dataset happens to carry — parquet columns
+            # and edge-metadata/ columns take different code paths inside the reader.
+            for col, dtype in sorted(er.schema()["columns"].items()):
+                if col in ("edge", "sending_cell", "receiving_cell", "lrm",
+                           "ligand", "receptor", "lrm_id"):
+                    continue
+                cv = er.edge_color_values("metadata", None, col)
+                if cv.get("type") != "categorical" or not cv.get("categories"):
+                    continue
+                spec = MetadataFilter.build(col, values=cv["categories"][:1])
+                p.record(f"edge__{key}__filter__{col}", lambda er=er, spec=spec:
+                         Probes.rows(er.query_grouped(density=1.0, edge_filter=spec)))
+                break
 
 
 def collect() -> dict:

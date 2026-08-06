@@ -202,7 +202,8 @@ class XeniumReader(SpatialDatasetReader):
 
     # ── Cell boundaries ───────────────────────────────────────────────────────
 
-    def cell_boundaries(self, bbox: Optional[tuple] = None, fraction: float = 1.0) -> dict:
+    def cell_boundaries(self, bbox: Optional[tuple] = None, fraction: float = 1.0,
+                        cell_ids: Optional[set] = None) -> dict:
         """Cell polygon vertices in pixel space for cells visible in the bbox.
 
         Selection is per *cell*, not per vertex. A cell qualifies if any one of its
@@ -212,12 +213,19 @@ class XeniumReader(SpatialDatasetReader):
         torn shapes. Sampling likewise draws whole cells, so a sampled cell is never
         missing part of its outline.
 
+        ``cell_ids`` narrows the query to a metadata-filtered subset (issue #45).
+        It joins in the same WHERE clause as the bbox, so it applies before both
+        the count and the sample — filtering to a rare cluster isolates it rather
+        than thinning it.
+
         ``total`` is the number of distinct cells touching the bbox before sampling —
         ``useCellBoundaries`` divides its ~5K target by this to pick the next fraction,
         so it has to stay a pre-sample count.
         """
         path = self.path / "cell_boundaries.parquet"
         if not path.exists():
+            return {"boundaries": [], "total": 0}
+        if cell_ids is not None and not cell_ids:
             return {"boundaries": [], "total": 0}
 
         cols = duck.columns(path)
@@ -230,11 +238,14 @@ class XeniumReader(SpatialDatasetReader):
         bbox_sql, bbox_params = duck.bbox_predicate(
             x_col, y_col, self._bbox_to_native(bbox) if bbox else None
         )
-        where = duck.where_clause([bbox_sql])
         src = duck.scan(path)
         select = f'"cell_id", "{x_col}", "{y_col}"'
 
         with duck.connect() as conn:
+            filter_sql = ""
+            if cell_ids is not None:
+                filter_sql = f'CAST("cell_id" AS VARCHAR) {duck.register_ids(conn, cell_ids)}'
+            where = duck.where_clause([bbox_sql, filter_sql])
             total = conn.execute(
                 f"SELECT COUNT(DISTINCT cell_id) FROM {src} {where}", bbox_params
             ).fetchone()[0]
@@ -318,10 +329,14 @@ class XeniumReader(SpatialDatasetReader):
         mode: str,
         field: Optional[str] = None,
         genes: Optional[list[str]] = None,
+        categorical: Optional[bool] = None,
     ) -> dict:
         if mode == "gene_set":
             return self._color_values_gene_set(genes or [])
-        return self._color_values_meta(field or "")
+        return self._color_values_meta(field or "", categorical)
+
+    def _metadata_frame(self):
+        return self._cells_full()
 
     def _color_values_gene_set(self, genes: list[str]) -> dict:
         h5 = self.path / "cell_feature_matrix.h5"
@@ -350,35 +365,6 @@ class XeniumReader(SpatialDatasetReader):
             return {"type": "continuous", "values": values, "min": 0.0, "max": vmax}
         except Exception:
             return {"type": "continuous", "values": {}, "min": 0.0, "max": 0.0}
-
-    def _color_values_meta(self, field: str) -> dict:
-        df = self._cells_full()
-        if df is None or field not in df.columns:
-            return {"type": "continuous", "values": {}, "min": 0.0, "max": 0.0}
-        col = df[field]
-        cell_ids = df["cell_id"].astype(str).tolist()
-        has_value = col.notna()
-        is_categorical = (
-            pd.api.types.is_string_dtype(col) or
-            pd.api.types.is_object_dtype(col) or
-            (pd.api.types.is_integer_dtype(col) and col.nunique() <= 30)
-        )
-        if is_categorical:
-            categories = sorted(col[has_value].astype(str).unique().tolist())
-            values = {
-                cell_ids[i]: str(col.iloc[i])
-                for i in range(len(cell_ids)) if has_value.iloc[i]
-            }
-            return {"type": "categorical", "values": values, "categories": categories}
-        valid = col[has_value]
-        if valid.empty:
-            return {"type": "continuous", "values": {}, "min": 0.0, "max": 0.0}
-        values = {
-            cell_ids[i]: float(col.iloc[i])
-            for i in range(len(cell_ids)) if has_value.iloc[i]
-        }
-        return {"type": "continuous", "values": values,
-                "min": float(valid.min()), "max": float(valid.max())}
 
     # ── Supplemental metadata ─────────────────────────────────────────────────
     # The loader itself lives on SpatialDatasetReader so every platform gets it.

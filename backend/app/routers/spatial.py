@@ -13,6 +13,7 @@ from typing import List, Optional
 import io
 import os
 
+from app.readers.metadata_filter import MetadataFilter
 from app.readers.reader_factory import ReaderFactory
 
 router = APIRouter()
@@ -202,12 +203,31 @@ def cell_boundaries(
     xmax: float = Query(None),
     ymax: float = Query(None),
     fraction: float = Query(1.0),
+    filter_field: str = Query(None, description="Metadata column to restrict on"),
+    filter_values: List[str] = Query(None, description="Categorical allowlist"),
+    filter_min: float = Query(None, description="Inclusive lower bound"),
+    filter_max: float = Query(None, description="Inclusive upper bound"),
+    filter_missing: bool = Query(False, description="Also keep units with no value"),
 ):
-    """Cell polygon boundaries filtered by bounding box.
-    fraction: 0–1 fraction of cells in viewport to return (randomly sampled)."""
-    return _reader(dataset).cell_boundaries(
+    """Cell polygon boundaries filtered by bounding box and, optionally, metadata.
+
+    fraction: 0–1 fraction of cells in viewport to return (randomly sampled).
+
+    The metadata filter (issue #45) is resolved to a cell-id set and applied inside
+    the reader *before* sampling, so restricting to a rare cluster isolates it at
+    full density instead of thinning it to almost nothing.
+    """
+    reader = _reader(dataset)
+    try:
+        cell_ids = reader.filter_cell_ids(MetadataFilter.build(
+            filter_field, filter_values, filter_min, filter_max, filter_missing,
+        ))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return reader.cell_boundaries(
         bbox=(xmin, ymin, xmax, ymax) if xmin is not None else None,
         fraction=max(0.0001, min(1.0, fraction)),
+        cell_ids=cell_ids,
     )
 
 
@@ -235,9 +255,14 @@ class ColorValuesRequest(BaseModel):
     mode: str
     field: Optional[str] = None
     genes: Optional[List[str]] = None
+    # None = auto-detect from dtype and cardinality; True/False force the
+    # interpretation of a metadata column (issue #35 — integer cluster IDs).
+    categorical: Optional[bool] = None
 
 
 @router.post("/{dataset}/color-values")
 def color_values_post(dataset: str, body: ColorValuesRequest):
     """Per-cell color values for gene_set or metadata coloring."""
-    return _reader(dataset).color_values(body.mode, body.field, body.genes)
+    return _reader(dataset).color_values(
+        body.mode, body.field, body.genes, body.categorical
+    )

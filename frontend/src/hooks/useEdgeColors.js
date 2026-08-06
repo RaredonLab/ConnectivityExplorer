@@ -28,7 +28,8 @@ export function useEdgeColors(
   apiBase, dataset, edgeColorBy, hiddenLrms, lrmCatalogue,
   palette, enabled, clamp,
   edges,  // array from useEdges — used for client-side lrm_set coloring
-  edgeFile = "edges.parquet"  // which edge-source parquet the metadata fetch reads
+  edgeFile = "edges.parquet",  // which edge-source parquet the metadata fetch reads
+  categorical = null  // issue #35 override: null = auto-detect, true/false = forced
 ) {
   // Appended to the metadata edge-color-values request (lrm_set is client-side only).
   const efParam = `?edge_file=${encodeURIComponent(edgeFile)}`;
@@ -99,7 +100,7 @@ export function useEdgeColors(
         const res = await fetch(`${apiBase}/edges/${dataset}/edge-color-values${efParam}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ mode: "metadata", field }),
+          body: JSON.stringify({ mode: "metadata", field, categorical }),
           signal: ctrl.signal,
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -131,7 +132,7 @@ export function useEdgeColors(
       }
     }, 400);
     return () => clearTimeout(timerRef.current);
-  }, [apiBase, dataset, edgeColorBy?.mode, edgeColorBy?.field, enabled, efParam]); // eslint-disable-line
+  }, [apiBase, dataset, edgeColorBy?.mode, edgeColorBy?.field, enabled, efParam, categorical]); // eslint-disable-line
 
   // ── Effect 2: apply clamp + palette to continuous metadata (no fetch, no debounce) ──
   useEffect(() => {
