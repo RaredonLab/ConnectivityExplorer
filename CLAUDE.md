@@ -9,7 +9,7 @@ of the project so any Claude instance can contribute immediately.
 ## What This Is
 
 A web-based spatial transcriptomics viewer supporting multiple platforms (Xenium,
-MERSCOPE, CosMx) with connectivity layers produced by the lab's NICHESv2 R pipeline.
+seqFISH, Visium HD, MERSCOPE, CosMx) with connectivity layers produced by the lab's NICHESv2 R pipeline.
 Built because Xenium Explorer does not support cell-cell ligand-receptor mechanism
 (LRM) visualization, and extended to be platform-agnostic.
 
@@ -50,22 +50,50 @@ The backend uses an abstract reader pattern. All platform readers inherit from
 `SpatialDatasetReader` (base_reader.py) and implement the same interface.
 `ReaderFactory` auto-detects the platform from directory contents.
 
-**Detection order:**
+**Detection order** (first match wins — see `reader_factory.py::_DETECTORS`):
 | Platform | Sentinel file |
 |---|---|
 | Xenium (10x Genomics) | `experiment.xenium` |
+| Visium HD (10x Genomics) | a `square_???um/` subdirectory |
 | MERSCOPE (Vizgen) | `cell_by_gene.csv` or `cell_metadata.csv` |
 | CosMx (Nanostring) | `*_tx_file.csv` |
+| seqFISH (Spatial Genomics) | `*_CellCoordinates*.csv` — a glob, so registered **last** |
 
 **Coordinate contract**: Every reader converts native coordinates to image pixel space
 before returning data. The frontend always receives pixel coordinates.
 
+**Capability flags**: `capabilities()` on the base class returns
+`{has_morphology, has_transcripts, has_boundaries, unit_label}`. The frontend reads these
+from `/spatial/{dataset}/info` and hides layers a platform cannot serve. Readers override
+it to declare what they lack — this is how spot-based platforms suppress the transcript
+and boundary layers rather than returning empty arrays for them.
+
 **Implementation status:**
 - Xenium: fully implemented
+- Visium HD: bins as points (`cells`, `cells_schema`, `cell_detail` from
+  `tissue_positions.parquet`); declares `has_transcripts: False`, `has_boundaries: False`,
+  `unit_label: "bin"`. `gene_list`, `cell_expression`, and gene-set color-values are stubs
+  pending `filtered_feature_bc_matrix.h5` parsing.
 - MERSCOPE: cells, transcripts, genes, color-values (metadata + gene-set) implemented;
-  cell boundaries stub (MERSCOPE uses HDF5 boundary format, not yet parsed)
+  `cell_boundaries()` returns empty and `has_boundaries: False` (HDF5 polygon format
+  not yet parsed)
 - CosMx: cells, transcripts, genes, metadata color-values implemented;
-  gene-set color-values stub (requires transcript aggregation per cell)
+  gene-set color-values stub (requires transcript aggregation per cell);
+  `has_boundaries: False` (boundaries are per-FOV label TIFFs)
+- seqFISH (Spatial Genomics GenePS): fully implemented for the current **v2** layout —
+  cells, transcripts, boundaries, expression, and both color-value modes. Legacy **v1**
+  reads cells and transcripts but declares `has_boundaries: False`, because v1 ships only
+  a label mask and polygonising it was deliberately deferred rather than adding a
+  dependency. See the seqFISH section below — its coordinate handling is unlike any other
+  reader and is the thing to understand before touching it.
+
+**Interface caveat**: `VisiumHDReader.transcripts()` and `.cell_boundaries()` still carry
+the pre-refactor signature (`limit=` instead of `fraction=`, returning `[]` instead of the
+`{"transcripts"/"boundaries": [...], "total": N}` dict every other reader returns). The
+router calls them with `fraction=`, so a direct call would raise `TypeError`. It is
+unreachable today only because the capability flags stop the frontend from asking. Fix the
+signatures before relying on those flags. Note also that `base_reader.py`'s docstrings
+still say `cell_boundaries -> list[dict]` while every implementation returns the dict form.
 
 ---
 
@@ -87,26 +115,38 @@ backend/
       base_reader.py         Abstract base class — SpatialDatasetReader interface
       reader_factory.py      ReaderFactory: auto-detect platform, instantiate reader
       xenium_reader.py       Xenium implementation (inherits SpatialDatasetReader)
+      seqfish_reader.py      seqFISH / Spatial Genomics GenePS; v2 full, v1 partial.
+                             Mixed µm/pixel coordinate handling — see its own section.
+      duck.py                Shared DuckDB query helpers used by the spatial readers
+      visium_hd_reader.py    Visium HD implementation — bins as points; partial (see status above)
       merscope_reader.py     MERSCOPE implementation (inherits SpatialDatasetReader)
       cosmx_reader.py        CosMx implementation (inherits SpatialDatasetReader)
-      edge_reader.py         reads edges.parquet; query_grouped(), lrm_catalogue(), edge_color_values(), edge_detail()
+      edge_reader.py         reads edges.parquet; query_grouped(), query_scores(), lrm_catalogue(), edge_color_values(), edge_detail();
+                             also loads edge-metadata/ supplemental annotations
+      supplemental.py        Shared cell-metadata/ + edge-metadata/ loader (key-agnostic)
       layer_reader.py        generic parquet reader
     tiling/
       pyramid.py             OME-TIFF → DZI; pyvips streaming primary, tifffile+Pillow fallback
   requirements.txt           pinned deps; cffi<2.0 required for pyvips 2.2.3 compatibility
   Dockerfile
+  tests/
+    golden_snapshot.py       Reader regression guard — see Development Workflow
+    golden_baseline.json     Recorded baseline (100 probes / 4 datasets)
 
 frontend/
   src/
+    App.jsx                  Root component; React ErrorBoundary + top-level layout.
+                             NOTE: sibling of components/, not inside it.
     store.js                 Zustand store — ALL shared state lives here
     components/
-      App.jsx                Root component; wraps everything in a React ErrorBoundary
       Viewer.jsx             Split-screen wrapper (Viewer) + per-panel logic (ViewerPanel)
       LayerPanel.jsx         Right-side panel: toggles, opacity, color-by, legends,
                              dataset/image picker, transcript species filter
       CellInfoPanel.jsx      Floating panel on cell click; shows color-by value highlight
       EdgeInfoPanel.jsx      Floating panel on edge/autocrine click
-      AnnotationToolbar.jsx  Region drawing + measurement tools; ⊞ Split / □ Single toggle; ⇔ Match zoom
+      AnnotationToolbar.jsx  Region drawing + measurement tools; ⊞ Split / □ Single toggle;
+                             ⇔ Match zoom; per-panel rotation (⟲ / angle / ⟳)
+      RenderingStatus.jsx    Per-panel loading badge, driven by the store's loadingKeys set
     hooks/
       useTranscripts.js      Viewport-bounded transcript fetch (bbox always sent; skip at low zoom)
       useCellBoundaries.js   Viewport-bounded cell boundary fetch (skip when fracW >= 0.5)
@@ -121,14 +161,30 @@ frontend/
   Dockerfile                 Multi-stage: node build → nginx serve
 
 docker-compose.yml           Repo root; mounts DATA_PATH (or sample_data/) as /data:ro
+docker-compose.prod.yml      Production stack used by the cloud deployment
 docker/docker-compose.yml    Legacy path (kept for compatibility)
-sample_data/                 GITIGNORED — default data mount for local dev/demo
-r/
-  export_NICHESObject_for_viewer.R  draft R function for NICHESv2 → edges.parquet export
+Caddyfile                    Reverse proxy + TLS for the cloud deployment; optional basicauth
+deploy.sh                    One-shot droplet bootstrap (see docs/cloud-deploy.md)
+upload-data.sh               rsync datasets to a deployed server
+sample_data/                 Partially gitignored — default data mount for local dev/demo.
+                             mouse_ileum_tiny and seqfish_synthetic are tracked; larger
+                             and licence-restricted datasets are ignored.
+  make_edges.py              Synthetic edges.parquet generator
+  make_seqfish.py            Synthetic seqFISH v2 ROI generator (committable fixture)
+r/                           Personal analysis scripts with hardcoded paths — a pipeline,
+                             not reusable functions. Run in this order:
+  ExportMetaDataforTissuePlex.R      dump a Seurat @meta.data to CSV
+  run_NICHESv2_Xenium_PPLR.R         run NICHESv2 (rad=25, method="product") → .rds
+  export_NICHES_for_TissuePlex_PPLR.R  call export_to_TissuePlex(), validate the parquet
 docs/
   data_format.md             edges.parquet column spec for NICHESv2 R export
-  setup.md                   Docker deployment guide
+  setup.md                   Docker deployment guide (lab-facing)
+  cloud-deploy.md            DigitalOcean deployment runbook (~$106–116/mo)
   public_datasets.md         Links to public Xenium datasets used for development
+  index.html, demo.gif       Landing page + README demo animation
+OBS/                         Archived, superseded planning docs. Provenance only —
+                             NOT a specification. See OBS/README.md.
+NICHESv2_package_design.md   Design doc for the separate NICHESv2 R package (not this repo)
 ```
 
 ---
@@ -167,7 +223,11 @@ Real data comes from `export_for_TissuePlex()` in the NICHESv2 R package.
 
 User-defined metadata (e.g. from external R analysis) can be loaded without modifying
 the dataset output by placing files in a `cell-metadata/` subdirectory of the dataset.
-Currently implemented in XeniumReader; the pattern should be ported to other readers.
+The loader lives on `SpatialDatasetReader`, so it is available to every platform; a reader
+opts in by calling `_merge_supplemental()` on its cells table (Xenium and seqFISH do).
+All a platform contributes is `_ROOT_CSV_SKIP` / `_ROOT_CSV_SKIP_SUFFIXES` — the list of
+its *own* root CSVs, so the loader never ingests platform output as user metadata. CosMx
+needs the suffix form because it prefixes every file with the experiment name.
 
 ```
 dataset_dir/
@@ -199,9 +259,51 @@ write.csv(my_metadata_df, file.path(dataset_dir, "cell-metadata", "metadata.csv"
 dropdown. Continuous columns get a gradient colormap; string or low-cardinality integer
 columns get discrete colors. The cell-click info panel also shows the supplemental fields.
 
-`XeniumReader._cells_full()` is cached per reader instance (one Docker request lifecycle).
-`_load_supplemental_metadata()` is also cached, so the CSV is only parsed once regardless
-of how many color-by requests arrive.
+`_cells_full()` is cached per reader instance (one Docker request lifecycle).
+`_load_supplemental_metadata()` is also cached on the base class, so the CSV is parsed once
+regardless of how many color-by requests arrive.
+
+---
+
+## Supplemental Edge Metadata (edge-metadata/ folder)
+
+The edge-side mirror of `cell-metadata/`, sharing its loader (`readers/supplemental.py`)
+so the two cannot drift. Lets a user annotate cell pairs — a call, a confidence, a review
+flag — without regenerating `edges.parquet` from R.
+
+```
+dataset_dir/
+  edges.parquet
+  edge-metadata/            ← create this directory
+    annotations.csv         ← key column `edge` = "SendingCell|ReceivingCell"
+    curation.parquet
+```
+
+Same rules as cell metadata: `.csv` / `.csv.gz` / `.parquet`, multiple files outer-joined,
+and the key column resolved as an explicit `edge` column → `Unnamed: 0` (R's unnamed
+rowname column) → the first column if it holds unique strings. So the R default works:
+
+```r
+write.csv(annotations_df, file.path(dataset_dir, "edge-metadata", "annotations.csv"))
+```
+
+**The folder sits beside the dataset, not beside the edge file.** `EdgeReader._dataset_dir`
+walks up out of `edges/` when the edge file is nested, so one set of annotations applies
+across every edge source in the dataset. Annotations describe cell pairs, which are a
+property of the tissue rather than of one scoring run.
+
+Three integration points, all in `edge_reader.py`:
+
+- `schema()` merges supplemental columns into the returned column map. That is the *only*
+  thing needed for them to appear in the edge color-by dropdown — `LayerPanel` builds that
+  list straight from the schema, so no frontend change was required.
+- `edge_color_values("metadata", field=…)` checks the parquet first, then the supplemental
+  frame. Supplemental data is already one row per edge, so it skips the `GROUP BY`.
+- `edge_detail()` attaches matches under a `metadata` key, which `EdgeInfoPanel` renders
+  generically as an "Annotations" block above the LRM table.
+
+Parquet wins a name collision (`schema()` uses `setdefault`): it is the authoritative
+source, and a supplemental column silently shadowing a real one would be painful to debug.
 
 ---
 
@@ -281,11 +383,26 @@ All shared state lives in a single Zustand store. Key sections:
 - **LRM filter**: `hiddenLrms` (Set of "ligand|receptor" strings), `lrmCatalogue`
 - **Selection**: `selectedCell`, `selectedEdge`
 - **Annotations**: `regions`, `measurements`, `activeRegion`, `annotationMode`
+- **Sampling**: `transcriptFraction` (default 0.1) and `cellBoundaryFraction`
+  (`null` = auto) control how much of the viewport each hook requests;
+  `transcriptStats` / `cellBoundaryStats` hold live `{shown, total}` counts that the
+  LayerPanel displays. Both stats are written by panel 0 only.
+- **Color overrides**: `categoryColorOverrides` (keyed `${field}::${category}`) and
+  `transcriptColorOverrides` (keyed by gene name) hold user-picked swatch colors.
+  Both reset on dataset change. `merge*` actions exist for bulk CSV import.
+- **Loading**: `loadingKeys` — a Set of in-flight keys, one per panel
+  (`panel-0`, `panel-1`). `RenderingStatus.jsx` shows a badge whenever it is non-empty.
+  Each ViewerPanel ORs together every hook's `loading` flag into its own key.
 - **Split-screen**: `panelCount` (1 or 2), `viewports` (array of two viewport objects,
   one per panel — `{xmin,ymin,xmax,ymax}` in image pixels), `pendingZoomMatch`
   (`null` or `{ fromPanel }` — consumed by the target panel to match zoom while
   keeping its own center). `requestZoomMatch(fromPanel)` / `clearZoomMatch()` are the
   corresponding actions.
+- **Rotation**: `panelRotations` — `[deg, deg]`, one per panel, normalized to 0–359 by
+  `setPanelRotation`. See the Rotation section below.
+- **`viewportActual`**: the *un-expanded* OSD bounds per panel. Distinct from `viewports`,
+  which is padded when a panel is rotated. Only ⇔ Match zoom reads it, so that matching
+  uses the true visible width rather than the rotation-padded fetch bbox.
 
 ---
 
@@ -340,7 +457,10 @@ Layers rendered in order (bottom to top):
 5. `edges-directed` — LineLayer, directed edges (LRM-filtered, colored)
 6. `edges-arrowheads` — SolidPolygonLayer, filled arrowhead triangles (full or harpoon style)
 7. `edges-autocrine` — ScatterplotLayer (stroked only), autocrine rings
-8. Annotation layers (region fills, outlines, measurement lines)
+8. Annotation layers (region fills, outlines, active region + vertices, measurement
+   lines, endpoints, first-point marker)
+
+Every layer receives `modelMatrix: rotModelMatrix` so rotation applies uniformly.
 
 **Tissue graph vs Edge data**: Tissue graph = binary structural layer (which cells are connected
 at all, regardless of LRM). Edge data = quantitative/categorical overlay on top. Analogous to
@@ -377,7 +497,8 @@ Results set `selectedCell` or `selectedEdge` in the store.
 - OSD viewer instance (`viewerRef`)
 - deck.gl ref (`deckRef`)
 - deck.gl view state (`deckViewState`)
-- Per-panel viewport in store (`viewports[panelIndex]`)
+- Per-panel viewport in store (`viewports[panelIndex]`, `viewportActual[panelIndex]`)
+- Rotation angle (`panelRotations[panelIndex]`) and the derived `rotModelMatrix`
 - `osdOpenCount` — local counter incremented on each OSD `open` event; used as dep
   for the morphology opacity effect to ensure it fires regardless of whether
   `imageSize.w` changed (fixes the bug where morphology stayed visible after
@@ -398,6 +519,67 @@ Results set `selectedCell` or `selectedEdge` in the store.
 - `setCellColorRange`, `setEdgeColorRange`, `setEdgeColorClamp` updates
 - EdgeInfoPanel rendering
 
+---
+
+## Per-Panel Rotation (issue #31)
+
+Each panel can be rotated independently, via ⟲ / angle input / ⟳ in `AnnotationToolbar`.
+`setPanelRotation(panelIndex, angle)` normalizes to 0–359.
+
+Rotation has to be applied in **two** places that must stay consistent:
+
+1. **OSD tiles** — `viewer.viewport.setRotation(panelRotation)` rotates the morphology
+   image.
+2. **deck.gl layers** — a column-major 4×4 `modelMatrix` from `makeRotMatrix(angle, cx, cy)`,
+   pivoting around the *current viewport center*, passed to every layer.
+
+Because the pivot is the viewport center, the matrix must be recomputed whenever the
+viewport moves — which is why `syncDeckFromOSD` rebuilds it on every viewport-change event
+rather than only when the angle changes.
+
+Three consequences worth knowing before touching this:
+
+- **Fetch bboxes are padded.** A rotated viewport rectangle covers more of the image than
+  its axis-aligned bounds suggest, so `rotatedBbox()` grows the box outward (no-op at 0°
+  and 180°). That padded box goes to `viewports`; the true bounds go to `viewportActual`.
+  ⇔ Match zoom reads `viewportActual` so padding never inflates the matched zoom.
+- **Picking and annotation clicks must inverse-rotate.** `screenToData()` projects screen →
+  rotated view space, then calls `inverseRotate()` to get back to original image
+  coordinates. Skip that and annotations land in the wrong place at any non-zero angle.
+- **Measurement labels forward-rotate.** `forwardRotate()` maps an image-space midpoint
+  into rotated view space before projecting it to a screen position for the HTML label.
+
+The rotation effect depends on `[panelRotation, osdOpenCount]` so it re-applies after an
+OSD reinitialization, not just on an angle change.
+
+---
+
+## Morphology Image Discovery
+
+`GET /spatial/{dataset}/images` returns bare filename **stems** (no extension, no directory
+prefix) for every `.ome.tiff` / `.ome.tif` / `.tiff` / `.tif` in the dataset root **and one
+level of subdirectories**. This is what makes Xenium's multi-channel `morphology_focus/`
+set selectable alongside the top-level `morphology.ome.tif`:
+
+```
+dataset_dir/
+  morphology.ome.tif              → "morphology"
+  morphology_focus/
+    morphology_focus_0000.ome.tif → "morphology_focus_0000"
+    morphology_focus_0001.ome.tif → "morphology_focus_0001"
+```
+
+`pyramid.py::_find_source()` resolves a stem back to a path by searching the **same two
+locations in the same order** — root first, then subdirectories. These two functions are a
+matched pair: if you change the search order or depth in one, change it in the other, or
+the picker will list images the tile builder cannot open.
+
+Hidden directories are skipped so `.dzi_cache` is never scanned. Stems are de-duplicated,
+and root-level files are added first, so a root file always wins a name collision with a
+subdirectory file. Names sort morphology-first, then alphabetically.
+
+---
+
 **⇔ Match zoom flow:**
 `requestZoomMatch(fromPanel)` → both panels' effects fire → source panel early-returns
 (`fromPanel === panelIndex`) → target panel reads `viewports[fromPanel]` via
@@ -409,26 +591,148 @@ center, calls `viewport.fitBounds(newBounds, false)` (animated), then `clearZoom
 
 ## Viewport-Bounded Data Fetching
 
-All data hooks (transcripts, cell boundaries, edges) are debounced and skip fetches
-that would be wasted at the current zoom level:
+All data hooks (transcripts, cell boundaries, edges) are debounced (400 ms) and abort
+in-flight requests when superseded. Rendering is no longer gated on a zoom threshold —
+the old `fracW >= 0.7` / `fracW >= 0.5` skip conditions were removed so layers draw at
+every zoom level including whole-tissue ("bird's-eye view", PR #28). Volume is instead
+controlled by user-adjustable sampling fractions:
 
-| Hook | Skip condition | Bbox filter | Limit |
+| Hook | Volume control | Bbox filter | Backend cap |
 |---|---|---|---|
-| `useTranscripts` | `fracW >= 0.7` | Always sent when viewport available | 50K (random sample) |
-| `useCellBoundaries` | `fracW >= 0.5` | Always sent | 20K cells |
-| `useEdges` | no viewport | Always sent | 10K–50K edges (grouped) |
+| `useTranscripts` | `transcriptFraction` (default 0.1) | Always sent | 200K rows |
+| `useCellBoundaries` | `cellBoundaryFraction` (`null` = auto, targets ~5K cells) | Always sent | — |
+| `useEdges` | `edgeDensity` (default 0.1) | Always sent | 500K grouped rows |
 
-`fracW = (xmax - xmin) / imageSize.w` — fraction of image width visible.
+Each hook reports live `{shown, total}` counts into the store so the LayerPanel can show
+what fraction of the data is actually on screen.
 
-**Transcript sampling**: the backend uses `df.sample(n=limit)` (random, not `head`)
-so the 50K returned transcripts are spatially uniform across the viewport rather than
-biased toward whatever region appears first in the parquet row order.
+**Transcript sampling**: the backend uses `df.sample(n=...)` (random, not `head`) so the
+returned transcripts are spatially uniform across the viewport rather than biased toward
+whatever region appears first in the parquet row order. Cell boundaries sample *unique
+cell IDs* before filtering rows, so a sampled cell keeps all of its vertices and never
+renders as a partial polygon.
+
+**Edge sampling** uses DuckDB `USING SAMPLE ... (bernoulli)` on the grouped result, so
+each edge is included independently at probability `density` — spatially uniform, and
+no sampling clause is emitted at all when `density = 1.0`.
 
 **Edge aggregation**: `useEdges` POSTs to `/edges/{dataset}/query-grouped` which returns
 one row per directed edge (GROUP BY edge, ORDER BY RANDOM()). For a 168M-row parquet
 (~300K edges × 559 LRMs) this is ~500× fewer rows than the raw query. The `excluded_lrms`
 list is sent in the request body so `visible_lrm_count` and `visible_score_sum` are
 pre-computed server-side.
+
+---
+
+## seqFISH / Spatial Genomics (readers/seqfish_reader.py)
+
+"seqFISH" names two unrelated things. The academic Cai-lab method has no standard output
+layout; **this reader targets the commercial Spatial Genomics GenePS platform**, which
+does. One flat directory, every file prefixed with an ROI name, one ROI per dataset folder
+(several ROIs in one folder logs a warning and uses the first).
+
+```
+seqfish_dataset/
+  Roi1_CellCoordinates.csv    label, area, center_x, center_y
+  Roi1_CellxGene.csv          unnamed first col = label; remaining cols = genes
+  Roi1_TranscriptList.csv     name, x, y, [z]      — no `cell`, no `qv` in v2
+  Roi1_DAPI.tiff              OME-TIFF despite the .tiff extension; often pyramidal
+  Roi1_Segmentation.tiff      integer label mask (unused — v2 uses the GeoJSON)
+  Roi1_Boundaries.geojson     polygons; feature `id` == label
+```
+
+**A single dataset mixes coordinate systems, and this is the thing to get right.**
+Measured on the reference dataset (1000×1000 px DAPI at 0.107161 µm/px = 107.16 µm across):
+
+| Source | Extent | Units |
+|---|---|---|
+| `CellCoordinates.csv` `center_x` | 1.82 → 105.66 | **microns** |
+| `TranscriptList.csv` `x` | 0.00 → 107.05 | **microns** |
+| `Boundaries.geojson` vertices | 0 → 999 | **pixels** |
+
+Cells and transcripts are divided by `pixel_size`; boundaries pass through untouched.
+Applying one transform to everything puts cells and their own outlines in different
+places — which reads as a rendering bug rather than a unit bug. Worse, the convention
+differs across GenePS software versions, so it cannot be hard-coded.
+
+`_units_divisor()` therefore decides **per table**, comparing that table's extent to the
+image width: a ratio near `pixel_size` means microns, near 1.0 means pixels. On the
+reference data the ratios are 0.106 / 0.107 / 0.999 — two orders of magnitude apart. The
+verdict is logged on load, so if a dataset ever misdetects it is visible in the backend
+output rather than silent.
+
+The regression test for this is geometric, not a digest: **every cell centroid must fall
+inside its own polygon.** 62/62 on the reference dataset and 36/36 on the synthetic
+fixture, with zero false positives against a control. Re-run that check after touching
+anything in the coordinate path.
+
+Other things worth knowing:
+
+- `pixel_size` comes from `PhysicalSizeX` in the **DAPI OME-XML** — not a manifest, unlike
+  every other platform. Falls back to 0.107 (the documented GenePS value).
+- `cell_area` is deliberately left in **µm²** to match Xenium, which never converts it, so
+  the "µm²" label in `CellInfoPanel` is true on every platform.
+- Cell identity comes from each GeoJSON feature's `id`, which equals `label`.
+  `spatialdata-io` instead maps polygons to cells *positionally* and has an open issue
+  about the fragility (scverse/spatialdata-io#249); a silent off-by-one there would draw
+  every outline on the wrong cell. We join on `id` and fall back to position only if
+  absent.
+- GeoJSON rings are closed (first vertex repeated); the reader drops the duplicate because
+  deck.gl closes polygons itself and Xenium boundaries do not repeat it.
+- v2 dropped the transcript→cell assignment column and has no `qv`. Nothing needs them
+  today, but expression can only come from `CellxGene.csv`, never from transcripts.
+
+**Test data.** `sample_data/make_seqfish.py` generates a committable synthetic v2 ROI and
+deliberately reproduces the mixed units, so a reader that got them wrong would fail on it.
+The real reference dataset (`seqfish-2-test-dataset.zip`, scverse CI fixture) is public by
+written permission from Spatial Genomics rather than under an open licence — usable
+locally, gitignored, and must not be redistributed from this repo.
+
+---
+
+## Spatial Query Path (readers/duck.py)
+
+`transcripts()` and `cell_boundaries()` query parquet through DuckDB rather than loading
+it into pandas. `readers/duck.py` holds the shared pieces — `connect()`, `scan()`,
+`columns()`, `bbox_predicate()`, `in_predicate()`, `reservoir_sample()`, `to_records()` —
+so every reader builds queries the same way. `EdgeReader` predates it and has its own
+equivalent helpers; the two should converge.
+
+**The reason is memory, not raw speed.** The old path did
+`pq.read_table(...).to_pandas()` and masked in pandas, which materializes the whole file
+on every viewport change. Measured on a synthetic 40M-row / 0.78 GB transcripts file,
+one zoomed-in viewport query:
+
+| | peak RSS | wall time |
+|---|---|---|
+| pandas full read + mask | 2903 MB | 912 ms |
+| DuckDB streaming | 233 MB | 1369 ms |
+
+12× less memory. Production runs on a 16 GB droplet, so a multi-GB `transcripts.parquet`
+under the old path would OOM well before it was slow. DuckDB is somewhat *slower* here
+because the file is not spatially sorted (see What's Not Built Yet #1) — pruning cannot
+skip anything, so it pays predicate-evaluation cost without the row-group savings. Fixing
+the layout closes that gap and then some.
+
+Things to preserve when editing these methods:
+
+- **`total` is a pre-sample count.** Both endpoints return `{rows, total}` where `total` is
+  the count *after* bbox/gene filtering but *before* sampling. `useCellBoundaries` divides
+  its ~5K target by `total` to pick the next fraction, so returning a post-sample count
+  makes the auto-fraction oscillate.
+- **Boundaries select whole cells, never loose vertices.** A cell qualifies if *any* vertex
+  falls in the bbox, and then all of its vertices are returned. Filtering vertices directly
+  clips cells at the viewport edge into torn polygons — measured at 97 clipped cells on the
+  bundled breast dataset before this changed.
+- **Sampling is seeded** (`duck.SAMPLE_SEED`). Re-fetching an unchanged viewport must return
+  the same rows or the layer visibly flickers.
+- **`USING SAMPLE` goes on a subquery** wrapping the filtered SELECT. Applied alongside a
+  WHERE clause, DuckDB may sample before filtering.
+- **DuckDB cannot bind numpy scalars.** `bbox_predicate()` casts to builtin `float` for
+  this reason.
+- A fresh `connect()` per call is deliberate — DuckDB's global connection is not
+  thread-safe and returns corrupt results under FastAPI's threadpool rather than raising.
+  It costs ~5 ms, which is noise next to the scan.
 
 ---
 
@@ -487,8 +791,10 @@ npm install
 npm run dev   # → http://localhost:5173, proxies /api → :8000
 ```
 
-Note: dev server runs on port **5173** (not 3000) to avoid conflicting with Docker,
-which binds port 3000. This is configured in `.claude/launch.json`.
+Note: the dev server runs on port **5173**, set in `frontend/vite.config.js`. It must not
+be 3000 — `docker compose` binds 3000 for the production frontend, so a dev server on 3000
+collides with any running container. `.claude/launch.json` passes `--port 5173` explicitly
+as well, so both entry points agree.
 
 **Docker — demo data (sample_data/):**
 ```bash
@@ -503,6 +809,36 @@ DATA_PATH="/absolute/path/to/datasets" docker compose up --build
 ```
 `DATA_PATH` must be an absolute host path with no colons. Drop any supported platform
 output folder under `DATA_PATH` — TissuePlex auto-detects the platform on first access.
+
+**Cloud deployment:** `docs/cloud-deploy.md` is a complete DigitalOcean runbook
+(~$106–116/month: 16 GB / 4 vCPU droplet + 200 GB block storage). The moving parts are
+`deploy.sh` (droplet bootstrap), `docker-compose.prod.yml` (production stack),
+`Caddyfile` (reverse proxy + automatic TLS), and `upload-data.sh` (rsync datasets up).
+Tuning knobs live in a `.env.prod` file that is gitignored and must be created by hand;
+`DUCKDB_MEMORY_LIMIT` is the one to reach for if the backend OOMs on large edge files.
+
+**Access control is opt-in and off by default.** The Caddyfile supports `basicauth`, but
+unless it is enabled anyone with the URL can view the data. There is no application-level
+auth, no user accounts, and no per-dataset permissions.
+
+**Regression guard.** `backend/tests/golden_snapshot.py` exercises every reader method
+against all local datasets, digests the results, and diffs them against a recorded
+baseline (100 probes across 4 datasets). Run it after any reader change:
+
+```bash
+cd backend && python3 tests/golden_snapshot.py          # check
+cd backend && python3 tests/golden_snapshot.py --record # adopt intentional changes
+```
+
+Datasets absent from a checkout are skipped, so it works with only the committed fixtures.
+Two determinism rules keep it honest: record-list digests are order-independent (because
+`query_grouped` uses `ORDER BY RANDOM()`), and sampling is seeded (`duck.SAMPLE_SEED`).
+If a probe changes and you cannot explain why, that is the point of the tool.
+
+There is still **no CI and no linter** — no `.github/workflows`, no ESLint or Python lint
+config. The snapshot is a guard, not a test suite: it catches "this changed" but does not
+assert correctness. Be correspondingly careful with the OSD ↔ deck.gl coordinate bridge,
+which it does not cover at all.
 
 ---
 
@@ -544,27 +880,82 @@ output folder under `DATA_PATH` — TissuePlex auto-detects the platform on firs
 - **`Math.min/max` spread on large arrays** (fixed in `useEdgeColors.js`): spreading
   100K+ element arrays causes `RangeError: Maximum call stack size exceeded`. Use a
   `for` loop to find min/max instead of `Math.min(...arr)`.
+- **`list_images` and `_find_source` are a matched pair.** They must search the same
+  locations in the same order (root, then one subdirectory level). Changing the depth or
+  order in one without the other makes the picker list images the tile builder can't open.
+- **Edge color clamp has two different defaults, by design.** `Viewer.jsx` auto-sets
+  `edgeColorClamp.high` from the p95 of `visible_score_sum` so the initial view isn't
+  washed out by outliers. But `useEdgeColors` computes its own fallback `hi` as `max`, not
+  p95, so that "reset range" lands on a value matching the legend endpoints. They disagree
+  intentionally — don't "fix" one in isolation.
+- **`edges.py` validates path traversal; the other routers don't.** `edges.py::_reader`
+  resolves `edge_file` and rejects anything escaping the dataset directory.
+  `spatial.py::_reader`, `tiles.py`, and `layers.py` do a bare `DATA_ROOT / dataset` with
+  no equivalent check. Harmless for a local single-user tool; worth closing before any
+  deployment where the URL is reachable by someone untrusted.
+- `zarr==2.18.2` is still pinned in requirements.txt although the readers use parquet and
+  HDF5, not zarr. Likely stale; verify before removing.
 
 ---
 
 ## What's Not Built Yet
 
-1. **R export function** — `export_for_TissuePlex()` is implemented in the NICHESv2 R
-   package (separate repo). The draft in `r/export_NICHESObject_for_viewer.R` is
-   superseded. See `docs/data_format.md` for the column spec.
+1. **Spatial queries are not yet spatially indexed.** `transcripts()` and
+   `cell_boundaries()` now stream through DuckDB (see the Spatial Query Path section),
+   which fixed the memory problem, but **row-group pruning does not currently help**:
+   Xenium writes `transcripts.parquet` in row order, not spatial order, with very large
+   row groups. Measured on the bundled breast dataset — 1.1M rows in **2** row groups,
+   the first spanning the entire x-range. DuckDB therefore still scans every row to
+   evaluate the bbox predicate.
 
-2. **Cell expression bar chart** — click panel currently shows cell metadata but not a sorted
-   gene expression readout. The `/spatial/{dataset}/expression/{cell_id}` endpoint exists
-   but the UI component is not built.
+   Sorting the file spatially and rewriting it with small row groups makes the statistics
+   selective and is dramatically faster. Measured on a synthetic 40M-row / 0.78 GB file,
+   zoomed-in viewport query: **COUNT 206 ms → 9 ms, SELECT 1010 ms → 29 ms**, for a
+   one-time 4.1 s sort. That is the natural next step, and it fits the existing
+   "build a derived artifact on first access and cache it" pattern that `ensure_pyramid`
+   already uses for tiles.
 
-3. **MERSCOPE cell boundaries** — MERSCOPE stores boundaries as HDF5 polygon data;
-   `MerscopeReader.cell_boundaries()` is a stub returning `[]`.
+2. **Supplemental cell metadata is not shown in the cell info panel** — `CellInfoPanel.jsx`
+   renders a hardcoded field list (`cell_id`, x, y, `transcript_counts`, `total_counts`,
+   `cell_area`, `nucleus_area`) plus expression. Supplemental columns merged by
+   `_cells_full()` reach the color-by dropdown but only appear in the panel if one happens
+   to be the active color-by field. `EdgeInfoPanel` does render its annotations
+   generically — the cell panel should be brought in line with it.
+   `sample_data/mouse_ileum_tiny/cell-metadata/example_clusters.csv` now exercises the
+   feature locally.
 
-4. **CosMx gene-set coloring** — requires per-cell expression aggregation from the
-   transcript file; `CosMxReader._color_values_gene_set()` is a stub returning empty.
+3. **Cell expression bar chart** — click panel shows cell metadata but not a sorted gene
+   expression readout. `/spatial/{dataset}/expression/{cell_id}` exists; the UI does not.
 
-5. **Performance at scale** — edge rendering is now fast (query-grouped returns ~300K
-   edges as 300K rows instead of 168M rows; colors computed client-side). Remaining
-   bottlenecks: LOD for arrowheads at low zoom, transcript rendering at very high density.
+4. **Reader interface drift** — `VisiumHDReader.transcripts()` / `.cell_boundaries()` use
+   the old `limit=` signature and return `[]`. See the caveat under Platform Support.
 
-6. **Authentication** — no auth. Fine for local/lab use, needs work for any public deployment.
+5. **MERSCOPE cell boundaries** — HDF5 polygon data; `MerscopeReader.cell_boundaries()`
+   returns empty and the reader declares `has_boundaries: False`.
+
+6. **CosMx gene-set coloring and boundaries** — gene-set coloring requires per-cell
+   expression aggregation from the transcript file; boundaries are per-FOV label TIFFs.
+   Both are stubs.
+
+7. **Visium HD expression** — `gene_list()`, `cell_expression()`, and gene-set color-values
+   need `filtered_feature_bc_matrix.h5` parsing.
+
+8. **Rendering performance** — edge rendering is fast now (query-grouped returns ~300K
+   rows instead of 168M; colors computed client-side). Remaining: LOD for arrowheads at
+   low zoom, transcript rendering at very high density.
+
+9. **Authentication** — no application-level auth. Caddy `basicauth` is available for
+   cloud deployments (`docs/cloud-deploy.md`) but is **opt-in and off by default**. There
+   are no user accounts and no per-dataset permissions.
+
+### Open GitHub issues
+
+- **#45 — Select cells/edges by metadata.** Let the user restrict the view to a subset
+  (a sample, or 2–3 cell types) rather than all data at once.
+- **#35 — Force-categorical toggle for numeric metadata columns.** Integer-coded
+  categoricals (Seurat cluster IDs, `*_snn_res.*`, phenotype codes) currently route to a
+  continuous viridis gradient. Partially mitigated already: `_color_values_meta()` treats
+  an integer column with ≤ 30 unique values as categorical, and `edge_color_values()` does
+  the same. Above that threshold users still fall back to renaming values to strings.
+  The ask is an explicit per-column "treat as categorical" toggle in the color panel,
+  with numeric sort order preserved in the legend.

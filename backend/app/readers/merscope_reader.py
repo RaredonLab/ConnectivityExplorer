@@ -31,6 +31,12 @@ _DEFAULT_PIXEL_SIZE = 0.108  # µm/px for standard MERSCOPE mosaic images
 
 class MerscopeReader(SpatialDatasetReader):
 
+    # Root CSVs that are MERSCOPE's own output, so the shared supplemental-metadata
+    # loader never mistakes them for user-supplied columns.
+    _ROOT_CSV_SKIP = frozenset({
+        "cell_by_gene.csv", "cell_metadata.csv", "detected_transcripts.csv",
+    })
+
     def __init__(self, dataset_path: Path):
         super().__init__(dataset_path)
         self._pixel_size: Optional[float] = None

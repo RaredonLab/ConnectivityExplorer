@@ -83,7 +83,12 @@ export default function CellInfoPanel() {
           <Divider />
           <MetaRow k="transcripts" v={detail.transcript_counts} />
           <MetaRow k="total counts" v={detail.total_counts} />
-          <MetaRow k="cell area" v={detail.cell_area?.toFixed(1) + " µm²"} />
+          {/* Guarded like nucleus_area below: without the null check the optional
+              chain yields undefined and the concatenation renders "undefined µm²"
+              on any platform that does not report a cell area. */}
+          {detail.cell_area != null && (
+            <MetaRow k="cell area" v={detail.cell_area.toFixed(1) + " µm²"} />
+          )}
           {detail.nucleus_area != null && (
             <MetaRow k="nucleus area" v={detail.nucleus_area.toFixed(1) + " µm²"} />
           )}

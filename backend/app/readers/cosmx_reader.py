@@ -30,6 +30,14 @@ _DEFAULT_PIXEL_SIZE = 0.18  # µm/px for standard CosMx output
 
 class CosMxReader(SpatialDatasetReader):
 
+    # CosMx prefixes every output with the experiment name (`<expt>_tx_file.csv`),
+    # so the shared supplemental-metadata loader has to match by suffix rather than
+    # by exact filename to avoid ingesting the platform's own tables.
+    _ROOT_CSV_SKIP_SUFFIXES = (
+        "_tx_file.csv", "_metadata_file.csv", "_fov_positions_file.csv",
+        "_exprmat_file.csv",
+    )
+
     def __init__(self, dataset_path: Path):
         super().__init__(dataset_path)
         self._cells_cache: Optional[pd.DataFrame] = None

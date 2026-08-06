@@ -117,7 +117,7 @@ function DatasetPicker() {
         <>
           <div style={{ ...SECTION_HEADER, marginTop: 8 }}>Image</div>
           <select
-            value={activeImage}
+            value={activeImage || ""}
             onChange={(e) => setActiveImage(e.target.value)}
             style={SELECT_STYLE}
           >

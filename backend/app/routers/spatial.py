@@ -66,22 +66,56 @@ def dataset_info(dataset: str):
     return {**r.info(), "capabilities": r.capabilities()}
 
 
+_TIFF_EXTS = (".ome.tiff", ".ome.tif", ".tiff", ".tif")
+
+
+def _strip_tiff_ext(name: str) -> Optional[str]:
+    """Return the filename stem if it is a TIFF variant, else None."""
+    for ext in _TIFF_EXTS:
+        if name.lower().endswith(ext):
+            return name[: -len(ext)]
+    return None
+
+
 @router.get("/{dataset}/images")
 def list_images(dataset: str):
-    """Base names of available morphology images (OME-TIFF / TIFF) in a dataset folder."""
+    """Base names of available morphology images (OME-TIFF / TIFF) in a dataset folder.
+
+    Searches the dataset root and one level of subdirectories, so multi-channel
+    sets such as Xenium's ``morphology_focus/`` are selectable alongside the
+    top-level ``morphology.ome.tif``.
+
+    Returns bare filename stems with no extension and no directory prefix;
+    ``pyramid._find_source`` resolves a stem back to a path by searching the
+    same two locations in the same order.
+    """
     path = DATA_ROOT / dataset
     if not path.exists():
         raise HTTPException(404, f"Dataset '{dataset}' not found")
-    names = []
+
+    names: list[str] = []
+    seen: set[str] = set()
+
+    def _add(f: Path) -> None:
+        stem = _strip_tiff_ext(f.name)
+        if stem and stem not in seen:
+            seen.add(stem)
+            names.append(stem)
+
+    # Root-level images first, so a top-level stem always wins a name collision
+    # with a subdirectory file — matching _find_source's resolution order.
     for f in sorted(path.iterdir()):
-        if not f.is_file():
-            continue
-        name = f.name
-        for ext in (".ome.tiff", ".ome.tif", ".tiff", ".tif"):
-            if name.lower().endswith(ext):
-                names.append(name[: -len(ext)])
-                break
-    # Morphology variants first
+        if f.is_file():
+            _add(f)
+
+    # One subdirectory level; skip hidden dirs so .dzi_cache is never scanned.
+    for sub in sorted(path.iterdir()):
+        if sub.is_dir() and not sub.name.startswith("."):
+            for f in sorted(sub.iterdir()):
+                if f.is_file():
+                    _add(f)
+
+    # Morphology variants first, then alphabetical
     names.sort(key=lambda n: (not n.startswith("morphology"), n))
     return names
 

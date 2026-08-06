@@ -12,6 +12,11 @@ from typing import Optional
 
 import pandas as pd
 
+from app.readers import supplemental
+
+
+_UNSET = object()  # sentinel: "not yet loaded" vs "loaded, no data"
+
 
 class SpatialDatasetReader(ABC):
     """
@@ -25,8 +30,20 @@ class SpatialDatasetReader(ABC):
     always receives pixel coordinates and never needs to know the native unit.
     """
 
+    # Filenames in the dataset root that belong to the platform itself rather than
+    # to the user, and must never be picked up as supplemental metadata. Subclasses
+    # override this with their own output filenames. `.csv.gz` at the root is always
+    # skipped, since every platform uses that only for its own data files.
+    _ROOT_CSV_SKIP: frozenset = frozenset()
+
+    # Suffix patterns for platforms whose output filenames carry a run-specific
+    # prefix (CosMx writes `<experiment>_tx_file.csv`), where an exact-name set
+    # cannot work.
+    _ROOT_CSV_SKIP_SUFFIXES: tuple = ()
+
     def __init__(self, dataset_path: Path):
         self.path = dataset_path
+        self._supp_meta_cache = _UNSET
 
     # ── Identity ──────────────────────────────────────────────────────────────
 
@@ -142,6 +159,60 @@ class SpatialDatasetReader(ABC):
             "has_boundaries": True,
             "unit_label": "cell",
         }
+
+    # ── Supplemental cell metadata (platform-agnostic) ────────────────────────
+    #
+    # Users add their own per-cell columns (clusters, pseudotime, phenotype calls)
+    # by dropping CSV/parquet into a `cell-metadata/` subdirectory, without touching
+    # the platform's own output. These live on the base class so every reader gets
+    # the feature; only `_ROOT_CSV_SKIP` is platform-specific.
+
+    def _load_supplemental_metadata(self) -> Optional[pd.DataFrame]:
+        """
+        Merge user-defined cell metadata from:
+          1. {dataset}/cell-metadata/  — all CSV / parquet
+          2. {dataset}/                — plain .csv only, skipping platform filenames
+        Multiple files are outer-joined on cell_id.  Cached per reader instance.
+
+        The loading itself lives in `supplemental.py`, shared with the `edge-metadata/`
+        feature so the two cannot drift apart.
+        """
+        if self._supp_meta_cache is not _UNSET:
+            return self._supp_meta_cache  # type: ignore[return-value]
+        files = supplemental.collect_files(
+            self.path / "cell-metadata",
+            root=self.path,
+            root_filter=lambda n: not self._is_platform_csv(n),
+        )
+        self._supp_meta_cache = supplemental.load_supplemental(
+            files, key="cell_id", log_prefix=self.platform
+        )
+        return self._supp_meta_cache  # type: ignore[return-value]
+
+    def _is_platform_csv(self, lowercase_name: str) -> bool:
+        """True if a root-level CSV is the platform's own output, not user metadata."""
+        if lowercase_name in self._ROOT_CSV_SKIP:
+            return True
+        return any(lowercase_name.endswith(s) for s in self._ROOT_CSV_SKIP_SUFFIXES)
+
+    def _merge_supplemental(self, cells: Optional[pd.DataFrame]) -> Optional[pd.DataFrame]:
+        """Left-join supplemental metadata onto a platform cells table.
+
+        Either side may be absent: with no supplemental files this returns `cells`
+        unchanged, and with no cells table it returns the supplemental frame alone
+        (so metadata-only datasets still expose their columns).
+        """
+        supp = self._load_supplemental_metadata()
+        if cells is None and supp is None:
+            return None
+        if supp is None:
+            return cells
+        if cells is None:
+            return supp
+        new_cols = [c for c in supp.columns if c not in cells.columns]
+        if not new_cols:
+            return cells
+        return cells.merge(supp[["cell_id"] + new_cols], on="cell_id", how="left")
 
     # ── Shared utilities ──────────────────────────────────────────────────────
 

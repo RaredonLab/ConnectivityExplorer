@@ -80,6 +80,28 @@ export default function EdgeInfoPanel({ apiBase, dataset, edgeId, edgeFile = "ed
               )}
             </div>
 
+            {/* User annotations from the dataset's edge-metadata/ folder.
+                Rendered generically so any column the user adds shows up without
+                a frontend change, matching how cell-metadata reaches the cell panel. */}
+            {detail.metadata && Object.keys(detail.metadata).length > 0 && (
+              <div style={{ marginBottom: 7 }}>
+                <div style={{ fontSize: 9, color: "#555", marginBottom: 3, textTransform: "uppercase", letterSpacing: 0.8 }}>
+                  Annotations
+                </div>
+                {Object.entries(detail.metadata).map(([k, v]) => (
+                  <div key={k} style={{ ...ROW_STYLE, borderBottom: "none", padding: "1px 0" }}>
+                    <span style={{ color: "#666", overflow: "hidden", textOverflow: "ellipsis",
+                                   whiteSpace: "nowrap", maxWidth: 130 }} title={k}>{k}</span>
+                    <span style={{ color: "#8cf", flexShrink: 0, marginLeft: 6, textAlign: "right",
+                                   overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 110 }}
+                          title={String(v)}>
+                      {typeof v === "number" && !Number.isInteger(v) ? v.toFixed(3) : String(v)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
             {/* LRM table */}
             <div style={{ fontSize: 9, color: "#555", marginBottom: 3, textTransform: "uppercase", letterSpacing: 0.8 }}>
               LRM scores ({detail.lrms?.length ?? 0} mechanisms)

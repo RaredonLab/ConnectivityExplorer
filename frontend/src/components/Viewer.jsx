@@ -226,6 +226,9 @@ function ViewerPanel({ panelIndex }) {
       viewerRef.current.destroy();
       viewerRef.current = null;
     }
+    // activeImage is null between a dataset switch and DatasetPicker resolving the
+    // new dataset's image list. Opening OSD here would request "null.dzi".
+    if (!dataset || !activeImage) return;
 
     const viewer = OpenSeadragon({
       element: containerRef.current,
