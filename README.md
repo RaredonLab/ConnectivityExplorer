@@ -24,6 +24,8 @@ Spatial transcriptomics platforms (Xenium, seqFISH, Visium HD, MERSCOPE, CosMx) 
 - **Per-panel rotation** — rotate either panel to any angle to align tissue orientation
 - **Transcript dot overlay** — per-gene colored dots, filterable by gene species, with hover tooltips
 - **Cell/spot segmentation** — polygon boundaries with color-by-gene-set or color-by-metadata, and editable per-category colors
+- **Metadata filtering** — restrict the view to a subset of cells or edges (a sample, a few cell types, a value range). Applied server-side before sampling, so a rare cluster renders at full density instead of being sampled away
+- **Treat-as-categorical toggle** — integer-coded cluster IDs get a discrete editable palette rather than a viridis gradient, with the numeric order preserved in the legend
 - **Region drawing and measurement tools** — annotate areas, export cell selections, save PNG screenshots
 - **Supplemental metadata** — drop any CSV or parquet into a `cell-metadata/` folder to add custom color-by columns (clusters, pseudotime, etc.) without touching the original data
 - **Multi-dataset support** — switch between datasets without restarting; each is auto-detected by platform
@@ -160,7 +162,7 @@ Standard R export works out of the box:
 write.csv(my_metadata, file.path(dataset_dir, "cell-metadata", "metadata.csv"))
 ```
 
-Columns appear automatically in the **Cell Color** dropdown. Continuous columns get a gradient; string and low-cardinality integer columns get discrete colors.
+Columns appear automatically in the **Cell Color** and **Cell Filter** dropdowns. Continuous columns get a gradient; string and low-cardinality integer columns get discrete colors. Use **treat as categorical** to override that guess either way — a Seurat cluster column with more than 30 levels still gets discrete colors, and a coded column you want as a gradient can have one.
 
 ## Supplemental edge metadata
 
@@ -232,10 +234,13 @@ The frontend automatically adapts its layer controls to the capabilities your re
 
 ## Roadmap
 
-Tracked in [GitHub issues](https://github.com/RaredonLab/TissuePlex/issues). Currently open:
+Tracked in [GitHub issues](https://github.com/RaredonLab/TissuePlex/issues).
 
-- **[#45](https://github.com/RaredonLab/TissuePlex/issues/45)** — select cells and edges by metadata, so you can focus on a sample or a few cell types instead of the whole dataset
-- **[#35](https://github.com/RaredonLab/TissuePlex/issues/35)** — a "treat as categorical" toggle for numeric metadata columns, so integer-coded cluster IDs get a discrete editable palette instead of a continuous gradient
+[#45](https://github.com/RaredonLab/TissuePlex/issues/45) (select by metadata) and [#35](https://github.com/RaredonLab/TissuePlex/issues/35) (treat-as-categorical toggle) are both implemented. Natural follow-ups, neither yet built:
+
+- Combining more than one filter at a time — today it is one column, so "cluster 4 *and* sample B" needs two passes
+- Persisting the categorical choice and the palette across reloads
+- Filtering transcripts, which needs a transcript→cell assignment that several platforms do not ship
 
 Large datasets are handled by a spatial index built automatically on first access, alongside the tile pyramid: files over 64 MB are rewritten sorted by a spatial grid, which makes viewport queries roughly 27× faster on a 40M-row transcript file and also converts seqFISH CSV to parquet along the way. Set `SPATIAL_CACHE=0` to disable it.
 

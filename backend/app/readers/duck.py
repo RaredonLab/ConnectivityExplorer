@@ -138,6 +138,24 @@ def in_predicate(col: str, values: list) -> tuple[str, list]:
     return f'"{col}" IN ({placeholders})', list(values)
 
 
+def register_ids(conn, ids, name: str = "tp_filter", col: str = "cell_id") -> str:
+    """Register a set of ids as a relation and return a semi-join predicate on it.
+
+    The metadata filter (issue #45) can keep hundreds of thousands of cells, which
+    is far past the point where an ``IN (?, ?, …)`` list is workable — DuckDB has
+    to bind every parameter, and the SQL text itself grows to megabytes. Handing
+    the ids over as a one-column frame instead makes it an ordinary hash semi-join.
+
+    ``ids`` must not be empty; an empty filter means "nothing matches" and callers
+    should short-circuit rather than build a query that cannot return rows.
+    """
+    import pandas as pd
+
+    frame = pd.DataFrame({col: [str(i) for i in ids]})
+    conn.register(name, frame)
+    return f"IN (SELECT \"{col}\" FROM {name})"
+
+
 # Sampling is seeded so that re-fetching an unchanged viewport returns the same
 # rows. Without this, every refetch reshuffles which transcripts are drawn and
 # the layer visibly flickers.

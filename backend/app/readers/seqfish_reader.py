@@ -388,7 +388,8 @@ class SeqfishReader(SpatialDatasetReader):
     # ── Boundaries ────────────────────────────────────────────────────────────
 
     def cell_boundaries(self, bbox: Optional[tuple] = None,
-                        fraction: float = 1.0) -> dict:
+                        fraction: float = 1.0,
+                        cell_ids: Optional[set] = None) -> dict:
         """Polygon vertices in pixel space, as long-format {cell_id, vertex_x,
         vertex_y} rows so the frontend needs no seqFISH-specific handling.
 
@@ -429,6 +430,11 @@ class SeqfishReader(SpatialDatasetReader):
                     pts = pts[:-1]
                 if pts:
                     polys.append((cid, pts))
+
+        # Metadata filter (issue #45) — applied before the bbox so it also governs
+        # `total`, and therefore the fraction the frontend asks for next.
+        if cell_ids is not None:
+            polys = [(cid, pts) for cid, pts in polys if cid in cell_ids]
 
         if not polys:
             return {"boundaries": [], "total": 0}
@@ -498,10 +504,14 @@ class SeqfishReader(SpatialDatasetReader):
     # ── Color values ──────────────────────────────────────────────────────────
 
     def color_values(self, mode: str, field: Optional[str] = None,
-                     genes: Optional[list[str]] = None) -> dict:
+                     genes: Optional[list[str]] = None,
+                     categorical: Optional[bool] = None) -> dict:
         if mode == "gene_set":
             return self._color_values_gene_set(genes or [])
-        return self._color_values_meta(field or "")
+        return self._color_values_meta(field or "", categorical)
+
+    def _metadata_frame(self):
+        return self._cells_full()
 
     def _color_values_gene_set(self, genes: list[str]) -> dict:
         df = self._cxg()
@@ -519,32 +529,3 @@ class SeqfishReader(SpatialDatasetReader):
             "max": float(summed.max()) if len(summed) and summed.max() > 0 else 1.0,
         }
 
-    def _color_values_meta(self, field: str) -> dict:
-        df = self._cells_full()
-        empty = {"type": "continuous", "values": {}, "min": 0.0, "max": 0.0}
-        if df is None or field not in df.columns:
-            return empty
-        col = df[field]
-        ids = df["cell_id"].astype(str).tolist()
-        has = col.notna()
-        # Same rule as the other readers: strings are categorical, and so are
-        # low-cardinality integers (cluster IDs arrive as ints from Seurat).
-        categorical = (
-            pd.api.types.is_string_dtype(col) or pd.api.types.is_object_dtype(col)
-            or (pd.api.types.is_integer_dtype(col) and col.nunique() <= 30)
-        )
-        if categorical:
-            return {
-                "type": "categorical",
-                "values": {ids[i]: str(col.iloc[i]) for i in range(len(ids)) if has.iloc[i]},
-                "categories": sorted(col[has].astype(str).unique().tolist()),
-            }
-        valid = col[has]
-        if valid.empty:
-            return empty
-        return {
-            "type": "continuous",
-            "values": {ids[i]: float(col.iloc[i]) for i in range(len(ids)) if has.iloc[i]},
-            "min": float(valid.min()),
-            "max": float(valid.max()),
-        }

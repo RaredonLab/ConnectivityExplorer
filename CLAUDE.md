@@ -113,6 +113,8 @@ backend/
       seqfish_reader.py      seqFISH / Spatial Genomics GenePS; v2 full, v1 partial.
                              Mixed µm/pixel coordinate handling — see its own section.
       duck.py                Shared DuckDB query helpers used by the spatial readers
+      metadata_filter.py     Categorical-vs-continuous typing + the MetadataFilter
+                             subsetting spec; shared by cells and edges (#35, #45)
       spatial_cache.py       Spatially-sorted parquet cache (build on first access)
       visium_hd_reader.py    Visium HD — bins as square polygons; see its own section
       merscope_reader.py     MERSCOPE implementation (inherits SpatialDatasetReader)
@@ -127,7 +129,7 @@ backend/
   Dockerfile
   tests/
     golden_snapshot.py       Reader regression guard — see Development Workflow
-    golden_baseline.json     Recorded baseline (133 probes / 5 datasets)
+    golden_baseline.json     Recorded baseline (191 probes / 7 datasets)
 
 frontend/
   src/
@@ -366,7 +368,15 @@ All shared state lives in a single Zustand store. Key sections:
 - **Layer visibility**: `layers` object — each layer has `visible` + `opacity`;
   `cellSegments` also has `outlineOpacity` (independent from fill opacity)
 - **Cell color**: `cellColorEnabled`, `colorBy` (`mode`: off/gene_set/metadata, `field`),
-  `cellColorPalette`, `cellColorClamp` (squish/oob cutoffs)
+  `cellColorPalette`, `cellColorClamp` (squish/oob cutoffs). `cellColorType` /
+  `cellColorCategories` hold the type the backend actually returned, written by
+  panel 0 — the LayerPanel reads these instead of guessing from the schema dtype.
+- **Categorical override**: `categoricalOverrides`, keyed `cell::<field>` /
+  `edge::<field>` → `true | false`; absent means auto-detect (issue #35).
+- **Metadata filter**: `cellFilter` / `edgeFilter`, each
+  `{ field, values, min, max, includeMissing }` or null (issue #45). `cellFilter`
+  also governs edges — both endpoints must survive it. Both reset on dataset change
+  (column names are dataset-specific); `edgeFilter` also resets on edge-file change.
 - **Transcript gene filter**: `selectedGenes` — `null` = no filter (show all);
   `Set<string>` = allowlist (show only those genes). Dataset-scoped; resets on
   dataset change. See Gene Filter section below.
@@ -852,6 +862,99 @@ Beyond 20 categories, `geneColor()` provides deterministic hash-based colors.
 
 ---
 
+## Metadata Typing and Subsetting (readers/metadata_filter.py)
+
+Two features share one module because they are the same question asked twice: *what
+kind of thing is this column?* Issue #35 asks it to pick a colour scheme, issue #45
+to pick a subset. `metadata_filter.py` answers both, and `base_reader` uses it for
+the cells table while `edge_reader` uses it for the edge table, so the two panels
+cannot drift apart.
+
+### Categorical vs continuous (#35)
+
+`is_categorical(col, forced)`:
+
+- `forced=None` — auto: strings, objects, bools, pandas categoricals, and **integers
+  with ≤ 30 distinct values** are categorical. That threshold is what makes Seurat
+  cluster IDs work, since `fwrite` on a `@meta.data` writes them as ints.
+- `forced=True` / `False` — the user's explicit "treat as categorical" choice.
+  Forcing *continuous* on a text column is ignored: there is no gradient to draw,
+  and honouring it would paint every unit one colour.
+
+`sort_categories()` sorts numerically when every label parses as a number, so cluster
+10 comes after cluster 2 rather than between 1 and 2.
+
+**`_color_values_meta` now lives on the base class.** Every reader used to carry a
+near-identical copy, and the six copies had already drifted — CosMx filled NaN with
+`""`/`0` where the others dropped it, and only some passed `key=str` to `sorted`.
+A reader now supplies only `_metadata_frame()`, the cells table it already builds.
+
+The override travels as `categorical` on `POST /color-values` and
+`POST /edge-color-values`, and lives in the store under `categoricalOverrides`
+keyed `cell::<field>` / `edge::<field>`.
+
+**The frontend no longer guesses the type from the schema dtype.** It could not: the
+backend's rule also depends on cardinality, which the schema does not carry. The old
+guess disagreed for exactly the columns issue #35 is about — an integer cluster column
+drew discrete colours on the canvas while the panel showed a viridis bar with two
+sliders that did nothing. Panel 0 now records the type the backend actually returned
+(`cellColorType` / `cellColorCategories`), and `EdgeSection` asks directly for the
+edge side. That also removed the duplicate `color-values` fetch both legends were
+making for themselves.
+
+### Subsetting (#45)
+
+`MetadataFilter` is either a categorical allowlist (`values`, compared as strings so
+it works whatever the dtype) or an inclusive numeric range (`vmin`/`vmax`), plus
+`include_missing` — false by default, because a cell with no cluster call is not part
+of "cluster 4".
+
+**Filters are resolved and applied server-side, before sampling.** This is the whole
+design constraint. Both the boundary and edge queries sample on the server, so a
+client-side filter would leave a fraction of a subset: narrowing to a cluster holding
+5% of cells at a 10% sample would draw 0.5% of the tissue. Filtering first means the
+subset renders at full density.
+
+- `SpatialDatasetReader.filter_cell_ids(spec)` resolves against `_metadata_frame()`
+  and caches per (reader, spec) — the same filter is re-resolved on every pan.
+  An unknown column raises `ValueError` → HTTP 400, rather than silently rendering
+  everything while the panel shows an active filter.
+- Each reader's `cell_boundaries()` takes `cell_ids` and **must apply it before the
+  count and the sample**. The five implementations differ too much to share code:
+  Xenium and CosMx join it into their DuckDB query, MERSCOPE skips non-matching rows
+  before decoding WKB, Visium HD and seqFISH mask their in-memory frames.
+- `EdgeReader.query_grouped()` takes `cell_ids` and `edge_filter`. An edge survives
+  the cell filter only when **both** endpoints do — the point of "focus on 2–3 cell
+  types" is the signalling within that subset, and a half-outside edge would run off
+  to a cell that is not drawn. `edge_filter` becomes a real SQL predicate when the
+  column is in the parquet, and a semi-join against a registered frame when it comes
+  from `edge-metadata/`.
+
+**Large id sets go through `duck.register_ids()`, not `IN (?, ?, …)`.** A filter can
+keep hundreds of thousands of cells; binding that many parameters is unworkable and
+the SQL text alone reaches megabytes. Registering a one-column frame makes it an
+ordinary hash semi-join.
+
+Two things that bit during implementation and are easy to reintroduce:
+
+- **Boolean columns need lowering.** The categories the panel offers come from pandas
+  (`"True"`), while DuckDB's `CAST(BOOLEAN AS VARCHAR)` yields `"true"`, so a literal
+  comparison silently matches nothing. `edge_filter_sql` lowers both sides for boolean
+  columns only — doing it for every column would merge genuinely distinct string labels.
+- **The auto sample fraction must recalibrate after a filter.** `useCellBoundaries`
+  picks its fraction from the previous fetch's total, which a filter invalidates, and
+  nothing else would trigger another fetch — so the layer sat showing a tenth of an
+  already-small subset until the user happened to pan. It now re-fetches once when the
+  corrected fraction is >1.2× the one used. The threshold matters: the panel derives
+  its displayed percentage from the *current* total, so a looser one leaves the readout
+  advertising a fraction the canvas is not drawing at.
+
+**Transcripts are deliberately not filtered.** Several platforms ship no
+transcript→cell assignment at all (seqFISH v2 dropped the column), so the filter has
+nothing to join on and would work on some datasets and not others.
+
+---
+
 ## Tile Pyramid
 
 The backend uses pyvips when available (fast streaming, handles very large OME-TIFFs
@@ -1014,7 +1117,9 @@ which it does not cover at all.
    to be the active color-by field. `EdgeInfoPanel` does render its annotations
    generically — the cell panel should be brought in line with it.
    `sample_data/mouse_ileum_tiny/cell-metadata/example_clusters.csv` now exercises the
-   feature locally.
+   feature locally. It carries a `seurat_clusters` column spanning 0–11 specifically so
+   the demo data reproduces issue #35: twelve integer levels, where a lexicographic sort
+   would put 10 and 11 between 1 and 2.
 
 3. **Cell expression bar chart** — click panel shows cell metadata but not a sorted gene
    expression readout. `/spatial/{dataset}/expression/{cell_id}` exists; the UI does not.
@@ -1042,12 +1147,15 @@ which it does not cover at all.
 
 ### Open GitHub issues
 
-- **#45 — Select cells/edges by metadata.** Let the user restrict the view to a subset
-  (a sample, or 2–3 cell types) rather than all data at once.
-- **#35 — Force-categorical toggle for numeric metadata columns.** Integer-coded
-  categoricals (Seurat cluster IDs, `*_snn_res.*`, phenotype codes) currently route to a
-  continuous viridis gradient. Partially mitigated already: `_color_values_meta()` treats
-  an integer column with ≤ 30 unique values as categorical, and `edge_color_values()` does
-  the same. Above that threshold users still fall back to renaming values to strings.
-  The ask is an explicit per-column "treat as categorical" toggle in the color panel,
-  with numeric sort order preserved in the legend.
+Both of the previously open issues (**#35** force-categorical toggle, **#45** select
+cells/edges by metadata) are implemented — see the *Metadata Typing and Subsetting*
+section. What each issue asked for but this pass did not deliver:
+
+- **#35** — the choice is per column and per session, but is not persisted across a
+  reload, and the legend has no per-category visibility checkbox. The filter section
+  covers the "show only cluster 4" case that checkbox would have served.
+- **#45** — filtering is on **one column at a time**. Composing two cell-side
+  predicates ("cluster 4 *and* sample B") needs a list of filters rather than a single
+  one; the backend `MetadataFilter` is already a value object, so the change is an
+  `and`-list in the store and a loop in `filter_cell_ids`. Transcripts are excluded
+  by design (no cell assignment on several platforms).

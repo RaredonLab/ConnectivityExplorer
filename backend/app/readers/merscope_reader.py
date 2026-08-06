@@ -319,7 +319,8 @@ class MerscopeReader(SpatialDatasetReader):
         return self._boundary_path_cache  # type: ignore[return-value]
 
     def cell_boundaries(self, bbox: Optional[tuple] = None,
-                        fraction: float = 1.0) -> dict:
+                        fraction: float = 1.0,
+                        cell_ids: Optional[set] = None) -> dict:
         """Cell polygons in pixel space, from the geoparquet boundary file.
 
         Software v231 and earlier wrote per-FOV HDF5 instead
@@ -350,6 +351,10 @@ class MerscopeReader(SpatialDatasetReader):
         seen: list[str] = []
         for entity, blob in zip(df["EntityID"].astype(str), df["Geometry"]):
             if blob is None:
+                continue
+            # Metadata filter (issue #45): skip before decoding the WKB, which is
+            # the expensive part, and before `total` so sampling sees the subset.
+            if cell_ids is not None and entity not in cell_ids:
                 continue
             try:
                 rings = _wkb_polygons(bytes(blob))
@@ -412,10 +417,14 @@ class MerscopeReader(SpatialDatasetReader):
     # ── Colour values ─────────────────────────────────────────────────────────
 
     def color_values(self, mode: str, field: Optional[str] = None,
-                     genes: Optional[list[str]] = None) -> dict:
+                     genes: Optional[list[str]] = None,
+                     categorical: Optional[bool] = None) -> dict:
         if mode == "gene_set":
             return self._color_values_gene_set(genes or [])
-        return self._color_values_meta(field or "")
+        return self._color_values_meta(field or "", categorical)
+
+    def _metadata_frame(self):
+        return self._cells_full()
 
     def _color_values_gene_set(self, genes: list[str]) -> dict:
         empty = {"type": "continuous", "values": {}, "min": 0.0, "max": 0.0}
@@ -442,33 +451,6 @@ class MerscopeReader(SpatialDatasetReader):
         vmax = float(df["total"].max())
         return {"type": "continuous", "values": vals,
                 "min": 0.0, "max": vmax if vmax > 0 else 1.0}
-
-    def _color_values_meta(self, field: str) -> dict:
-        empty = {"type": "continuous", "values": {}, "min": 0.0, "max": 0.0}
-        df = self._cells_full()
-        if df is None or field not in df.columns:
-            return empty
-        col = df[field]
-        ids = df["cell_id"].astype(str).tolist()
-        has = col.notna()
-        categorical = (
-            pd.api.types.is_string_dtype(col) or pd.api.types.is_object_dtype(col)
-            or (pd.api.types.is_integer_dtype(col) and col.nunique() <= 30)
-        )
-        if categorical:
-            return {
-                "type": "categorical",
-                "values": {ids[i]: str(col.iloc[i]) for i in range(len(ids)) if has.iloc[i]},
-                "categories": sorted(col[has].astype(str).unique().tolist(), key=str),
-            }
-        valid = col[has]
-        if valid.empty:
-            return empty
-        return {
-            "type": "continuous",
-            "values": {ids[i]: float(col.iloc[i]) for i in range(len(ids)) if has.iloc[i]},
-            "min": float(valid.min()), "max": float(valid.max()),
-        }
 
 
 def spatial_cache_sorted(reader, path: Path, xcol: str, ycol: str) -> Path:

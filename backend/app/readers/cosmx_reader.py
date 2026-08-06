@@ -301,7 +301,8 @@ class CosMxReader(SpatialDatasetReader):
         return None
 
     def cell_boundaries(self, bbox: Optional[tuple] = None,
-                        fraction: float = 1.0) -> dict:
+                        fraction: float = 1.0,
+                        cell_ids: Optional[set] = None) -> dict:
         """Cell outlines in pixel space from the polygons CSV.
 
         One row per vertex, already in global pixels, so no FOV offset has to be
@@ -342,6 +343,10 @@ class CosMxReader(SpatialDatasetReader):
                 visible = conn.execute(
                     f"SELECT DISTINCT {key} AS cid FROM {src} WHERE {sql}", params
                 ).df()["cid"].tolist()
+                # Metadata filter (issue #45) — narrow the visible set before the
+                # count so `total` and the sample both describe the subset.
+                if cell_ids is not None:
+                    visible = [c for c in visible if str(c) in cell_ids]
                 if not visible:
                     return {"boundaries": [], "total": 0}
                 total = len(visible)
@@ -360,6 +365,8 @@ class CosMxReader(SpatialDatasetReader):
                 df = conn.execute(
                     f'SELECT {key} AS cell_id, "x_global_px", "y_global_px" '
                     f"FROM {src}").df()
+                if cell_ids is not None:
+                    df = df[df["cell_id"].astype(str).isin(cell_ids)]
                 total = df["cell_id"].nunique()
                 fraction = max(0.0001, min(1.0, fraction))
                 n = round(fraction * total)
@@ -404,33 +411,15 @@ class CosMxReader(SpatialDatasetReader):
         mode: str,
         field: Optional[str] = None,
         genes: Optional[list[str]] = None,
+        categorical: Optional[bool] = None,
     ) -> dict:
         if mode == "gene_set":
             # Gene-set coloring requires aggregating transcripts per cell — stub
             return {"type": "continuous", "values": {}, "min": 0.0, "max": 0.0}
-        return self._color_values_meta(field or "")
+        return self._color_values_meta(field or "", categorical)
 
-    def _color_values_meta(self, field: str) -> dict:
-        df = self._load_cells()
-        if df is None or field not in df.columns:
-            return {"type": "continuous", "values": {}, "min": 0.0, "max": 0.0}
-        col = df[field]
-        cell_ids = df["cell_id"].astype(str).tolist()
-        is_categorical = (
-            pd.api.types.is_string_dtype(col) or
-            pd.api.types.is_object_dtype(col) or
-            (pd.api.types.is_integer_dtype(col) and col.nunique() <= 30)
-        )
-        if is_categorical:
-            labels = col.fillna("").astype(str).tolist()
-            categories = sorted(col.dropna().astype(str).unique().tolist())
-            return {"type": "categorical",
-                    "values": {cell_ids[i]: labels[i] for i in range(len(cell_ids))},
-                    "categories": categories}
-        filled = col.fillna(0)
-        return {"type": "continuous",
-                "values": {cell_ids[i]: float(filled.iloc[i]) for i in range(len(cell_ids))},
-                "min": float(filled.min()), "max": float(filled.max())}
+    def _metadata_frame(self):
+        return self._load_cells()
 
     # ── Internal helpers ──────────────────────────────────────────────────────
 

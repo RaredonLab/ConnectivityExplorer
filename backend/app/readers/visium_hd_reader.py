@@ -282,7 +282,8 @@ class VisiumHDReader(SpatialDatasetReader):
     # ── Boundaries: each bin as a square ──────────────────────────────────────
 
     def cell_boundaries(self, bbox: Optional[tuple] = None,
-                        fraction: float = 1.0) -> dict:
+                        fraction: float = 1.0,
+                        cell_ids: Optional[set] = None) -> dict:
         """Bin outlines as square polygons, in pixel space.
 
         A bin qualifies if its centroid lies in the bbox, and then all four of its
@@ -292,6 +293,10 @@ class VisiumHDReader(SpatialDatasetReader):
         df = self._cells_full()
         if df is None or df.empty:
             return {"boundaries": [], "total": 0}
+
+        # Metadata filter (issue #45), before the bbox count and the sample.
+        if cell_ids is not None:
+            df = df[df["cell_id"].astype(str).isin(cell_ids)]
 
         if bbox:
             xmin, ymin, xmax, ymax = bbox
@@ -397,10 +402,14 @@ class VisiumHDReader(SpatialDatasetReader):
     # ── Colour values ─────────────────────────────────────────────────────────
 
     def color_values(self, mode: str, field: Optional[str] = None,
-                     genes: Optional[list[str]] = None) -> dict:
+                     genes: Optional[list[str]] = None,
+                     categorical: Optional[bool] = None) -> dict:
         if mode == "gene_set":
             return self._color_values_gene_set(genes or [])
-        return self._color_values_meta(field or "")
+        return self._color_values_meta(field or "", categorical)
+
+    def _metadata_frame(self):
+        return self._cells_full()
 
     def _color_values_gene_set(self, genes: list[str]) -> dict:
         empty = {"type": "continuous", "values": {}, "min": 0.0, "max": 0.0}
@@ -421,30 +430,3 @@ class VisiumHDReader(SpatialDatasetReader):
             "max": vmax,
         }
 
-    def _color_values_meta(self, field: str) -> dict:
-        empty = {"type": "continuous", "values": {}, "min": 0.0, "max": 0.0}
-        df = self._cells_full()
-        if df is None or df.empty or field not in df.columns:
-            return empty
-        col = df[field]
-        ids = df["cell_id"].astype(str).tolist()
-        has = col.notna()
-        categorical = (
-            pd.api.types.is_string_dtype(col) or pd.api.types.is_object_dtype(col)
-            or (pd.api.types.is_integer_dtype(col) and col.nunique() <= 30)
-        )
-        if categorical:
-            return {
-                "type": "categorical",
-                "values": {ids[i]: str(col.iloc[i]) for i in range(len(ids)) if has.iloc[i]},
-                "categories": sorted(col[has].astype(str).unique().tolist(), key=str),
-            }
-        valid = col[has]
-        if valid.empty:
-            return empty
-        return {
-            "type": "continuous",
-            "values": {ids[i]: float(col.iloc[i]) for i in range(len(ids)) if has.iloc[i]},
-            "min": float(valid.min()),
-            "max": float(valid.max()),
-        }

@@ -27,13 +27,36 @@ import { useState, useEffect, useRef, useMemo } from "react";
 
 const DEBOUNCE_MS = 400;
 
+/**
+ * Normalise a store filter into the request-body shape the backend expects
+ * (issue #45), or undefined when nothing is constrained.
+ */
+function filterBody(filter) {
+  if (!filter?.field) return undefined;
+  const hasValues = Array.isArray(filter.values) && filter.values.length > 0;
+  if (!hasValues && filter.min == null && filter.max == null) return undefined;
+  return {
+    field: filter.field,
+    values: hasValues ? filter.values : null,
+    min: filter.min ?? null,
+    max: filter.max ?? null,
+    include_missing: !!filter.includeMissing,
+  };
+}
+
 export function useEdges(
   apiBase, dataset, viewport, imageSize, enabled,
   minStrength, hiddenLrms, lrmCatalogue, density = 1.0,
-  edgeFile = "edges.parquet"
+  edgeFile = "edges.parquet", cellFilter = null, edgeFilter = null
 ) {
   // Which edge-source parquet to query; appended to every /edges request.
   const efParam = `?edge_file=${encodeURIComponent(edgeFile)}`;
+
+  // Serialised so the structural effect can depend on filter *content* rather
+  // than object identity, which changes on every render.
+  const cellFilterBody = filterBody(cellFilter);
+  const edgeFilterBody = filterBody(edgeFilter);
+  const filterKey = JSON.stringify([cellFilterBody ?? null, edgeFilterBody ?? null]);
   // ── Structural state ──────────────────────────────────────────────────────
   const [structuralEdges, setStructuralEdges] = useState([]);
   const [loadingStructural, setLoadingStructural] = useState(false);
@@ -69,6 +92,11 @@ export function useEdges(
       const { xmin, ymin, xmax, ymax } = viewport;
       const body = { xmin, ymin, xmax, ymax, density: Math.max(0.01, Math.min(1.0, density)) };
       if (minStrength != null && minStrength > 0) body.min_strength = minStrength;
+      // Metadata filters go to the server so they apply before the density
+      // sample; filtering the response instead would sample first and leave a
+      // fraction of the subset.
+      if (cellFilterBody) body.cell_filter = cellFilterBody;
+      if (edgeFilterBody) body.edge_filter = edgeFilterBody;
 
       try {
         const res = await fetch(`${apiBase}/edges/${dataset}/query-grouped${efParam}`, {
@@ -86,7 +114,7 @@ export function useEdges(
     }, DEBOUNCE_MS);
 
     return () => clearTimeout(structTimerRef.current);
-  }, [apiBase, dataset, viewport, imageSize, enabled, minStrength, density, efParam]); // eslint-disable-line
+  }, [apiBase, dataset, viewport, imageSize, enabled, minStrength, density, efParam, filterKey]); // eslint-disable-line
 
   // ── Effect 2: score fetch ──────────────────────────────────────────────────
   // Runs when viewport OR hiddenLrms changes.

@@ -16,9 +16,11 @@ from pathlib import Path
 from typing import Optional
 import duckdb
 import pandas as pd
+import pyarrow as pa
 import pyarrow.parquet as pq
 
-from app.readers import supplemental
+from app.readers import duck, metadata_filter, supplemental
+from app.readers.metadata_filter import MetadataFilter
 
 _DUCKDB_MEMORY_LIMIT = os.getenv("DUCKDB_MEMORY_LIMIT", "8GB")
 
@@ -130,13 +132,15 @@ class EdgeReader:
         return self._lrm_catalogue_cache
 
     def edge_color_values(self, mode: str, lrms: list[str] | None = None,
-                          field: str | None = None) -> dict:
+                          field: str | None = None,
+                          categorical: bool | None = None) -> dict:
         """
         Return per-directed-edge color values.
 
         mode='lrm_set'  — sum score across requested LRMs per edge; continuous
         mode='metadata' — group by edge, take first value of `field` per edge;
-                          auto-detect categorical vs continuous
+                          categorical vs continuous auto-detected unless the caller
+                          overrides it with `categorical` (issue #35)
         """
         col_names = set(self._parquet_schema().names)
 
@@ -182,27 +186,99 @@ class EdgeReader:
                 col = supp.set_index("edge")[field].dropna()
                 if col.empty:
                     return {"type": "continuous", "values": {}, "min": 0, "max": 0}
-            dtype = str(col.dtype)
-            n_unique = col.nunique()
-            is_cat = (
-                dtype in ("object", "string", "bool")
-                or (dtype.startswith("int") and n_unique <= 30)
-            )
-            if is_cat:
-                categories = sorted(col.dropna().unique().tolist(), key=str)
+            # Same typing rule as the cell side, from the shared module, so the
+            # two color panels can never disagree about what is categorical.
+            if metadata_filter.is_categorical(col, categorical):
+                labels = col.dropna().astype(str)
                 return {
                     "type": "categorical",
-                    "values": col.to_dict(),
-                    "categories": categories,
+                    "values": labels.to_dict(),
+                    "categories": metadata_filter.sort_categories(labels.unique()),
                 }
+            numeric = pd.to_numeric(col, errors="coerce").dropna()
+            if numeric.empty:
+                return {"type": "continuous", "values": {}, "min": 0, "max": 0}
             return {
                 "type": "continuous",
-                "values": col.to_dict(),
-                "min": float(col.min()),
-                "max": float(col.max()),
+                "values": numeric.to_dict(),
+                "min": float(numeric.min()),
+                "max": float(numeric.max()),
             }
 
         return {"type": "continuous", "values": {}, "min": 0, "max": 0}
+
+    # ── Metadata filtering (issue #45) ────────────────────────────────────────
+
+    def edge_filter_sql(self, spec: Optional[MetadataFilter], conn) -> tuple[str, list]:
+        """WHERE fragment restricting the query to edges matching `spec`.
+
+        Two paths, because edge metadata has two sources:
+
+        * A column in ``edges.parquet`` becomes an ordinary SQL predicate, which
+          DuckDB can push down and use for row-group pruning.
+        * A column from ``edge-metadata/`` only exists in pandas, so the matching
+          edge ids are resolved there and registered as a relation to semi-join
+          against — the same trick the cell filter uses, and for the same reason:
+          the id list is far too long to bind as parameters.
+
+        Raises ValueError for an unknown column rather than quietly returning the
+        unfiltered view, which would look like the filter had failed.
+        """
+        if spec is None:
+            return "", []
+        schema = self._parquet_schema()
+        parquet_cols = set(schema.names)
+        if spec.field in parquet_cols:
+            quoted = f'"{spec.field}"'
+            if spec.values is not None:
+                # Compare as text so one code path covers int, float and string
+                # columns. Booleans need lowering: the categories the panel offers
+                # come from pandas, which writes "True", while DuckDB's cast writes
+                # "true", so a literal comparison would never match.
+                cast = f"CAST({quoted} AS VARCHAR)"
+                vals = list(spec.values)
+                if pa.types.is_boolean(schema.field(spec.field).type):
+                    cast = f"lower({cast})"
+                    vals = [v.lower() for v in vals]
+                ph = ", ".join("?" for _ in vals)
+                sql = f"{cast} IN ({ph})"
+                params = vals
+            else:
+                parts, params = [], []
+                if spec.vmin is not None:
+                    parts.append(f"{quoted} >= ?"); params.append(spec.vmin)
+                if spec.vmax is not None:
+                    parts.append(f"{quoted} <= ?"); params.append(spec.vmax)
+                sql = " AND ".join(parts) if parts else ""
+            if spec.include_missing and sql:
+                sql = f"({sql} OR {quoted} IS NULL)"
+            return sql, params
+
+        supp = self._supplemental()
+        if supp is None or spec.field not in supp.columns:
+            raise ValueError(f"unknown edge metadata column '{spec.field}'")
+        keep = supp.loc[spec.mask(supp[spec.field]), "edge"].astype(str)
+        if keep.empty:
+            return "FALSE", []
+        pred = duck.register_ids(conn, keep.tolist(), name="tp_edge_filter", col="edge")
+        return f'CAST("edge" AS VARCHAR) {pred}', []
+
+    @staticmethod
+    def cell_filter_sql(cell_ids: Optional[set], conn) -> tuple[str, list]:
+        """WHERE fragment keeping only edges whose **both** endpoints survive the
+        cell filter.
+
+        Both, not either: the point of "focus on 2–3 cell types" is the signalling
+        *within* that subset. An edge with one endpoint outside would be drawn
+        running off to a cell that is not on screen.
+        """
+        if cell_ids is None:
+            return "", []
+        if not cell_ids:
+            return "FALSE", []
+        pred = duck.register_ids(conn, cell_ids, name="tp_cell_filter")
+        return (f'CAST("sending_cell" AS VARCHAR) {pred} '
+                f'AND CAST("receiving_cell" AS VARCHAR) {pred}'), []
 
     def edge_detail(self, edge_id: str) -> dict | None:
         """Return all LRM rows for a single directed edge, structured for the info panel."""
@@ -278,6 +354,8 @@ class EdgeReader:
         min_lrm_count: int = 1,
         density: float = 1.0,
         max_limit: int = 500_000,
+        cell_ids: Optional[set] = None,
+        edge_filter: Optional[MetadataFilter] = None,
     ) -> list[dict]:
         """
         Return one row per directed edge (GROUP BY edge), pre-aggregated.
@@ -294,6 +372,11 @@ class EdgeReader:
         density=1.0 returns all edges in the viewport (up to max_limit).
         density<1.0 uses bernoulli sampling so each edge is independently
         included with probability `density` — spatially uniform.
+
+        `cell_ids` and `edge_filter` are the metadata filters from issue #45. Both
+        go into the WHERE clause, so they run before the GROUP BY and before the
+        density sample: filtering to a rare cell type keeps that type's edges at
+        full density rather than sampling them away.
         """
         ps = self.pixel_size
         schema_names = set(self._parquet_schema().names)
@@ -314,8 +397,6 @@ class EdgeReader:
                 )
                 where_params.extend([xmin_u, xmax_u, ymin_u, ymax_u,
                                       xmin_u, xmax_u, ymin_u, ymax_u])
-
-        where = f"WHERE {' AND '.join(where_conditions)}" if where_conditions else ""
 
         # Build SELECT columns
         agg_cols = ["edge"]
@@ -346,18 +427,36 @@ class EdgeReader:
             if density < 1.0 else ""
         )
 
-        sql = f"""
-            SELECT * FROM (
-                SELECT {select}
-                FROM {self._from()}
-                {where}
-                GROUP BY edge
-                HAVING lrm_count >= 1
-            ) {sample_clause}
-            LIMIT {max_limit}
-        """
+        # The connection is opened before the WHERE clause is finalised because the
+        # metadata filters may need to register a relation on it to semi-join
+        # against. Filter conditions are appended after the bbox so the parameter
+        # order still matches the order the placeholders appear in the SQL text —
+        # DuckDB binds positionally by text order, not by clause.
+        # An edge file without endpoint columns cannot be filtered by cell; the
+        # tissue graph still draws, it just ignores the cell subset.
+        if not {"sending_cell", "receiving_cell"} <= schema_names:
+            cell_ids = None
 
         with self._conn() as conn:
+            for cond, prm in (
+                self.cell_filter_sql(cell_ids, conn),
+                self.edge_filter_sql(edge_filter, conn),
+            ):
+                if cond:
+                    where_conditions.append(cond)
+                    where_params.extend(prm)
+            where = f"WHERE {' AND '.join(where_conditions)}" if where_conditions else ""
+
+            sql = f"""
+                SELECT * FROM (
+                    SELECT {select}
+                    FROM {self._from()}
+                    {where}
+                    GROUP BY edge
+                    HAVING lrm_count >= 1
+                ) {sample_clause}
+                LIMIT {max_limit}
+            """
             df = conn.execute(sql, where_params).df()
 
         for col in ("x1", "y1", "x2", "y2"):
