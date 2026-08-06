@@ -38,13 +38,35 @@ import numpy as np
 PIXEL_SIZE = 0.107161
 IMAGE_PX = 512
 
+# Real mouse gene symbols forming 20 complete ligand-receptor pairs in
+# connectomedb2025 (NICHESv2's default database). Using real symbols rather than
+# Gene00/Gene01/... matters: a panel of invented names has no LR pair with both
+# partners present, so NICHESv2 errors out with "No valid LR pairs remain" and
+# the fixture cannot demonstrate the edge pipeline at all.
+#
+#   Tgfb1->Tgfbr1/2  Wnt5a->Fzd1/Ror2  Cxcl12->Cxcr4  Vegfa->Kdr/Flt1
+#   Pdgfb->Pdgfrb    Hgf->Met          Il6->Il6ra     Efnb1->Ephb2
+#   Spp1->Cd44       Ccl2->Ccr2        Bmp4->Bmpr2    Fgf2->Fgfr1
+#   Egf->Egfr        Jag1/Dll4->Notch1 Apoe->Lrp1     Thbs1->Cd47
+LR_PANEL = [
+    "Tgfb1", "Tgfbr1", "Tgfbr2", "Wnt5a", "Fzd1", "Ror2", "Cxcl12", "Cxcr4",
+    "Vegfa", "Kdr", "Flt1", "Pdgfb", "Pdgfrb", "Hgf", "Met", "Il6", "Il6ra",
+    "Efnb1", "Ephb2", "Spp1", "Cd44", "Ccl2", "Ccr2", "Bmp4", "Bmpr2",
+    "Fgf2", "Fgfr1", "Egf", "Egfr", "Jag1", "Dll4", "Notch1", "Apoe", "Lrp1",
+    "Thbs1", "Cd47",
+]
+
 
 def build(out: Path, n_cells: int, n_genes: int, seed: int) -> None:
     rng = np.random.default_rng(seed)
     out.mkdir(parents=True, exist_ok=True)
 
     extent_um = IMAGE_PX * PIXEL_SIZE
-    genes = [f"Gene{i:02d}" for i in range(n_genes)]
+    # Take the real LR panel; n_genes only trims it. Invented names would leave
+    # NICHESv2 with no scorable pair (see LR_PANEL above).
+    if n_genes > len(LR_PANEL):
+        raise SystemExit(f"--genes max is {len(LR_PANEL)} (the size of LR_PANEL)")
+    genes = LR_PANEL[:n_genes]
 
     # ── Cell centroids on a jittered grid, so cells never overlap ────────────
     per_side = math.ceil(math.sqrt(n_cells))
@@ -152,7 +174,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--out", default="seqfish_synthetic", help="output directory")
     ap.add_argument("--cells", type=int, default=36)
-    ap.add_argument("--genes", type=int, default=10)
+    ap.add_argument("--genes", type=int, default=len(LR_PANEL),
+                    help=f"how many of the {len(LR_PANEL)} LR-panel genes to use")
     ap.add_argument("--seed", type=int, default=42)
     a = ap.parse_args()
     build(Path(__file__).resolve().parent / a.out, a.cells, a.genes, a.seed)

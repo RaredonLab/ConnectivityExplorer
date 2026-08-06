@@ -127,7 +127,7 @@ backend/
   Dockerfile
   tests/
     golden_snapshot.py       Reader regression guard — see Development Workflow
-    golden_baseline.json     Recorded baseline (100 probes / 4 datasets)
+    golden_baseline.json     Recorded baseline (133 probes / 5 datasets)
 
 frontend/
   src/
@@ -167,11 +167,12 @@ sample_data/                 Partially gitignored — default data mount for loc
                              and licence-restricted datasets are ignored.
   make_edges.py              Synthetic edges.parquet generator
   make_seqfish.py            Synthetic seqFISH v2 ROI generator (committable fixture)
-r/                           Personal analysis scripts with hardcoded paths — a pipeline,
-                             not reusable functions. Run in this order:
-  ExportMetaDataforTissuePlex.R      dump a Seurat @meta.data to CSV
-  run_NICHESv2_Xenium_PPLR.R         run NICHESv2 (rad=25, method="product") → .rds
-  export_NICHES_for_TissuePlex_PPLR.R  call export_to_TissuePlex(), validate the parquet
+r/                           NICHESv2 → edges.parquet. See r/README.md.
+  niches_xenium.R            Xenium — coordinates already µm; read this one first
+  niches_seqfish.R           seqFISH — dense CSV counts, per-version coordinate units
+  niches_visium_hd.R         Visium HD — pixel coordinates, must convert to µm
+  niches_common.R            shared helpers (10x h5 reader, LR-coverage check, validation)
+  *_PPLR.R                   older personal pipeline with hardcoded paths; reference only
 docs/
   data_format.md             edges.parquet column spec for NICHESv2 R export
   setup.md                   Docker deployment guide (lab-facing)
