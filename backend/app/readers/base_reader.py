@@ -12,6 +12,8 @@ from typing import Optional
 
 import pandas as pd
 
+from app.readers import supplemental
+
 
 _UNSET = object()  # sentinel: "not yet loaded" vs "loaded, no data"
 
@@ -171,86 +173,27 @@ class SpatialDatasetReader(ABC):
           1. {dataset}/cell-metadata/  — all CSV / parquet
           2. {dataset}/                — plain .csv only, skipping platform filenames
         Multiple files are outer-joined on cell_id.  Cached per reader instance.
+
+        The loading itself lives in `supplemental.py`, shared with the `edge-metadata/`
+        feature so the two cannot drift apart.
         """
         if self._supp_meta_cache is not _UNSET:
             return self._supp_meta_cache  # type: ignore[return-value]
-
-        candidate_files: list[Path] = []
-        meta_dir = self.path / "cell-metadata"
-        if meta_dir.is_dir():
-            candidate_files.extend(sorted(meta_dir.iterdir()))
-        for f in sorted(self.path.iterdir()):
-            if not f.is_file():
-                continue
-            nl = f.name.lower()
-            if not nl.endswith(".csv"):
-                continue
-            if self._is_platform_csv(nl):
-                continue
-            candidate_files.append(f)
-
-        frames: list[pd.DataFrame] = []
-        for f in candidate_files:
-            try:
-                nl = f.name.lower()
-                if nl.endswith(".parquet"):
-                    df = pd.read_parquet(f)
-                    if "cell_id" not in df.columns:
-                        print(f"[{self.platform}] skip {f.name}: no 'cell_id' column")
-                        continue
-                elif nl.endswith(".csv.gz") or nl.endswith(".csv"):
-                    df = self._read_csv_with_barcodes(f)
-                    if df is None:
-                        continue
-                else:
-                    continue
-                df["cell_id"] = df["cell_id"].astype(str)
-                frames.append(df)
-                print(f"[{self.platform}] loaded supplemental metadata: {f.name} "
-                      f"({len(df)} rows, {len(df.columns)-1} extra columns)")
-            except Exception as exc:
-                print(f"[{self.platform}] warning: could not load {f.name}: {exc}")
-
-        if not frames:
-            self._supp_meta_cache = None
-            return None
-
-        merged = frames[0]
-        for frame in frames[1:]:
-            new_cols = ["cell_id"] + [c for c in frame.columns if c not in merged.columns]
-            merged = merged.merge(frame[new_cols], on="cell_id", how="outer")
-        self._supp_meta_cache = merged
-        return merged
+        files = supplemental.collect_files(
+            self.path / "cell-metadata",
+            root=self.path,
+            root_filter=lambda n: not self._is_platform_csv(n),
+        )
+        self._supp_meta_cache = supplemental.load_supplemental(
+            files, key="cell_id", log_prefix=self.platform
+        )
+        return self._supp_meta_cache  # type: ignore[return-value]
 
     def _is_platform_csv(self, lowercase_name: str) -> bool:
         """True if a root-level CSV is the platform's own output, not user metadata."""
         if lowercase_name in self._ROOT_CSV_SKIP:
             return True
         return any(lowercase_name.endswith(s) for s in self._ROOT_CSV_SKIP_SUFFIXES)
-
-    def _read_csv_with_barcodes(self, path: Path) -> Optional[pd.DataFrame]:
-        """Read a CSV and promote the barcode column to 'cell_id'.
-
-        Resolution order: an explicit `cell_id` column; then `Unnamed: 0`, which is
-        what pandas calls R's unnamed rowname column from `write.csv(row.names=TRUE)`;
-        then the first column if it holds unique strings.
-        """
-        try:
-            df = pd.read_csv(path, index_col=0)
-            df.index.name = "cell_id"
-            return df.reset_index()
-        except Exception:
-            pass
-        df = pd.read_csv(path)
-        if "cell_id" in df.columns:
-            return df
-        if "Unnamed: 0" in df.columns:
-            return df.rename(columns={"Unnamed: 0": "cell_id"})
-        first = df.columns[0]
-        if df[first].dtype == object and df[first].is_unique:
-            return df.rename(columns={first: "cell_id"})
-        print(f"[{self.platform}] skip {path.name}: cannot identify barcode column")
-        return None
 
     def _merge_supplemental(self, cells: Optional[pd.DataFrame]) -> Optional[pd.DataFrame]:
         """Left-join supplemental metadata onto a platform cells table.

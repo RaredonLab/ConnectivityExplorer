@@ -159,6 +159,25 @@ write.csv(my_metadata, file.path(dataset_dir, "cell-metadata", "metadata.csv"))
 
 Columns appear automatically in the **Cell Color** dropdown. Continuous columns get a gradient; string and low-cardinality integer columns get discrete colors.
 
+## Supplemental edge metadata
+
+The same idea for cell *pairs* — annotate edges without regenerating `edges.parquet` from R:
+
+```
+dataset_folder/
+  edges.parquet
+  edge-metadata/          ← create this directory
+    annotations.csv       ← key column `edge` = "SendingCell|ReceivingCell"
+```
+
+```r
+write.csv(annotations_df, file.path(dataset_dir, "edge-metadata", "annotations.csv"))
+```
+
+Columns appear automatically in the **edge color** dropdown, and show as an *Annotations* block when you click an edge. The folder sits beside the dataset rather than beside the edge file, so one set of annotations applies across every edge source — annotations describe cell pairs, which belong to the tissue rather than to one scoring run.
+
+`sample_data/mouse_ileum_tiny` ships worked examples of both `cell-metadata/` and `edge-metadata/`.
+
 ---
 
 ## Development setup

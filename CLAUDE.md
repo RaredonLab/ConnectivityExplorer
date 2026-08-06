@@ -69,7 +69,7 @@ it to declare what they lack — this is how spot-based platforms suppress the t
 and boundary layers rather than returning empty arrays for them.
 
 **Implementation status:**
-- Xenium: fully implemented; the only reader with supplemental `cell-metadata/` support
+- Xenium: fully implemented
 - Visium HD: bins as points (`cells`, `cells_schema`, `cell_detail` from
   `tissue_positions.parquet`); declares `has_transcripts: False`, `has_boundaries: False`,
   `unit_label: "bin"`. `gene_list`, `cell_expression`, and gene-set color-values are stubs
@@ -121,7 +121,9 @@ backend/
       visium_hd_reader.py    Visium HD implementation — bins as points; partial (see status above)
       merscope_reader.py     MERSCOPE implementation (inherits SpatialDatasetReader)
       cosmx_reader.py        CosMx implementation (inherits SpatialDatasetReader)
-      edge_reader.py         reads edges.parquet; query_grouped(), query_scores(), lrm_catalogue(), edge_color_values(), edge_detail()
+      edge_reader.py         reads edges.parquet; query_grouped(), query_scores(), lrm_catalogue(), edge_color_values(), edge_detail();
+                             also loads edge-metadata/ supplemental annotations
+      supplemental.py        Shared cell-metadata/ + edge-metadata/ loader (key-agnostic)
       layer_reader.py        generic parquet reader
     tiling/
       pyramid.py             OME-TIFF → DZI; pyvips streaming primary, tifffile+Pillow fallback
@@ -260,6 +262,48 @@ columns get discrete colors. The cell-click info panel also shows the supplement
 `_cells_full()` is cached per reader instance (one Docker request lifecycle).
 `_load_supplemental_metadata()` is also cached on the base class, so the CSV is parsed once
 regardless of how many color-by requests arrive.
+
+---
+
+## Supplemental Edge Metadata (edge-metadata/ folder)
+
+The edge-side mirror of `cell-metadata/`, sharing its loader (`readers/supplemental.py`)
+so the two cannot drift. Lets a user annotate cell pairs — a call, a confidence, a review
+flag — without regenerating `edges.parquet` from R.
+
+```
+dataset_dir/
+  edges.parquet
+  edge-metadata/            ← create this directory
+    annotations.csv         ← key column `edge` = "SendingCell|ReceivingCell"
+    curation.parquet
+```
+
+Same rules as cell metadata: `.csv` / `.csv.gz` / `.parquet`, multiple files outer-joined,
+and the key column resolved as an explicit `edge` column → `Unnamed: 0` (R's unnamed
+rowname column) → the first column if it holds unique strings. So the R default works:
+
+```r
+write.csv(annotations_df, file.path(dataset_dir, "edge-metadata", "annotations.csv"))
+```
+
+**The folder sits beside the dataset, not beside the edge file.** `EdgeReader._dataset_dir`
+walks up out of `edges/` when the edge file is nested, so one set of annotations applies
+across every edge source in the dataset. Annotations describe cell pairs, which are a
+property of the tissue rather than of one scoring run.
+
+Three integration points, all in `edge_reader.py`:
+
+- `schema()` merges supplemental columns into the returned column map. That is the *only*
+  thing needed for them to appear in the edge color-by dropdown — `LayerPanel` builds that
+  list straight from the schema, so no frontend change was required.
+- `edge_color_values("metadata", field=…)` checks the parquet first, then the supplemental
+  frame. Supplemental data is already one row per edge, so it skips the `GROUP BY`.
+- `edge_detail()` attaches matches under a `metadata` key, which `EdgeInfoPanel` renders
+  generically as an "Annotations" block above the LRM table.
+
+Parquet wins a name collision (`schema()` uses `setdefault`): it is the authoritative
+source, and a supplemental column silently shadowing a real one would be painful to debug.
 
 ---
 
@@ -871,12 +915,14 @@ which it does not cover at all.
    "build a derived artifact on first access and cache it" pattern that `ensure_pyramid`
    already uses for tiles.
 
-2. **Supplemental metadata is not shown in the cell info panel** — `CellInfoPanel.jsx`
+2. **Supplemental cell metadata is not shown in the cell info panel** — `CellInfoPanel.jsx`
    renders a hardcoded field list (`cell_id`, x, y, `transcript_counts`, `total_counts`,
    `cell_area`, `nucleus_area`) plus expression. Supplemental columns merged by
    `_cells_full()` reach the color-by dropdown but only appear in the panel if one happens
-   to be the active color-by field. Compounding this, **no sample dataset has a
-   `cell-metadata/` folder**, so the feature cannot be exercised locally as shipped.
+   to be the active color-by field. `EdgeInfoPanel` does render its annotations
+   generically — the cell panel should be brought in line with it.
+   `sample_data/mouse_ileum_tiny/cell-metadata/example_clusters.csv` now exercises the
+   feature locally.
 
 3. **Cell expression bar chart** — click panel shows cell metadata but not a sorted gene
    expression readout. `/spatial/{dataset}/expression/{cell_id}` exists; the UI does not.

@@ -15,9 +15,15 @@ import os
 from pathlib import Path
 from typing import Optional
 import duckdb
+import pandas as pd
 import pyarrow.parquet as pq
 
+from app.readers import supplemental
+
 _DUCKDB_MEMORY_LIMIT = os.getenv("DUCKDB_MEMORY_LIMIT", "8GB")
+
+
+_UNSET = object()
 
 
 class EdgeReader:
@@ -28,6 +34,42 @@ class EdgeReader:
         self._schema_cache = None
         self._lrm_catalogue_cache = None
         self._pixel_size = pixel_size
+        self._supp_cache = _UNSET
+
+    # ── Supplemental edge metadata ────────────────────────────────────────────
+    #
+    # Mirrors the cell-metadata/ convention exactly, one level up: the user drops
+    # CSV/parquet keyed on `edge` into an edge-metadata/ folder beside the dataset,
+    # and the columns appear in the edge color-by dropdown without regenerating
+    # edges.parquet from R.
+    #
+    # The folder lives next to the *dataset*, not next to the edge file, so a single
+    # set of annotations applies across every edge source in a dataset (see the
+    # multiple-edge-files feature). Annotations describe cell pairs, which are a
+    # property of the tissue rather than of one scoring run.
+
+    @property
+    def _dataset_dir(self) -> Path:
+        # self.path is either <dataset>/edges.parquet or <dataset>/edges/<name>.parquet.
+        parent = self.path.parent
+        return parent.parent if parent.name == "edges" else parent
+
+    def _supplemental(self):
+        """User edge annotations keyed on `edge`, or None. Cached per instance."""
+        if self._supp_cache is not _UNSET:
+            return self._supp_cache
+        files = supplemental.collect_files(self._dataset_dir / "edge-metadata")
+        self._supp_cache = supplemental.load_supplemental(
+            files, key="edge", log_prefix="edge_reader"
+        )
+        return self._supp_cache
+
+    def _supplemental_columns(self) -> dict:
+        """{column: dtype_str} for supplemental columns, excluding the join key."""
+        df = self._supplemental()
+        if df is None:
+            return {}
+        return {c: str(df[c].dtype) for c in df.columns if c != "edge"}
 
     @property
     def pixel_size(self) -> float:
@@ -50,13 +92,19 @@ class EdgeReader:
         return conn
 
     def schema(self) -> dict:
+        """Column names and dtypes, parquet columns plus any supplemental ones.
+
+        The frontend builds the edge color-by dropdown straight from this, so
+        including supplemental columns here is all it takes for them to appear —
+        no frontend change required.
+        """
         schema = self._parquet_schema()
-        return {
-            "columns": {
-                name: str(schema.field(name).type)
-                for name in schema.names
-            }
-        }
+        columns = {name: str(schema.field(name).type) for name in schema.names}
+        # Parquet wins a name collision: it is the authoritative source, and a
+        # supplemental column shadowing a real one would be confusing to debug.
+        for col, dtype in self._supplemental_columns().items():
+            columns.setdefault(col, dtype)
+        return {"columns": columns}
 
     def lrm_catalogue(self) -> list[dict]:
         """Return unique LRM rows sorted by lrm_id. Includes string 'lrm' field if present."""
@@ -116,13 +164,24 @@ class EdgeReader:
             }
 
         if mode == "metadata":
-            if not field or field not in col_names:
+            if not field:
                 return {"type": "continuous", "values": {}, "min": 0, "max": 0}
-            with self._conn() as conn:
-                df = conn.execute(
-                    f'SELECT edge, FIRST("{field}") AS val FROM {self._from()} GROUP BY edge'
-                ).df()
-            col = df.set_index("edge")["val"]
+
+            if field in col_names:
+                with self._conn() as conn:
+                    df = conn.execute(
+                        f'SELECT edge, FIRST("{field}") AS val FROM {self._from()} GROUP BY edge'
+                    ).df()
+                col = df.set_index("edge")["val"]
+            else:
+                # Supplemental column from edge-metadata/. Already one row per edge,
+                # so there is nothing to aggregate.
+                supp = self._supplemental()
+                if supp is None or field not in supp.columns:
+                    return {"type": "continuous", "values": {}, "min": 0, "max": 0}
+                col = supp.set_index("edge")[field].dropna()
+                if col.empty:
+                    return {"type": "continuous", "values": {}, "min": 0, "max": 0}
             dtype = str(col.dtype)
             n_unique = col.nunique()
             is_cat = (
@@ -169,6 +228,21 @@ class EdgeReader:
                 result[c] = first[c]
         if "is_autocrine" in first.index:
             result["is_autocrine"] = bool(first["is_autocrine"])
+
+        # Attach user annotations under their own key so the info panel can present
+        # them separately from the platform's own fields.
+        supp = self._supplemental()
+        if supp is not None:
+            row = supp[supp["edge"].astype(str) == str(edge_id)]
+            if not row.empty:
+                extras = {}
+                for c, v in row.iloc[0].items():
+                    if c == "edge" or pd.isna(v):
+                        continue
+                    extras[c] = (None if isinstance(v, float) and not math.isfinite(v)
+                                 else (v.item() if hasattr(v, "item") else v))
+                if extras:
+                    result["metadata"] = extras
         return result
 
     def column_summary(self, column: str) -> dict:
