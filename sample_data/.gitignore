@@ -37,6 +37,11 @@ transcripts.csv.gz
 # Xenium cell layers (not yet used by TissuePlex)
 cell_layers.parquet
 
+# ── Derived caches (built on first access, never committed) ──────────────────
+.dzi_cache/
+.tissueplex_cache/
+*.sorted.parquet
+
 # ── Python cache ──────────────────────────────────────────────────────────────
 __pycache__/
 *.pyc

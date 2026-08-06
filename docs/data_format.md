@@ -1,6 +1,23 @@
 # Edge Data Format (NICHESv2)
 
-This document specifies the `edges.parquet` file produced by `export_for_TissuePlex()` from the NICHESv2 R package. TissuePlex reads this file alongside any supported platform output folder.
+This document specifies the `edges.parquet` file produced by `export_to_TissuePlex()` from the NICHESv2 R package. TissuePlex reads this file alongside any supported platform output folder.
+
+> **Install NICHESv2 from the `dev` branch.** `export_to_TissuePlex()` exists only there —
+> the `main` branch does not have it. `arrow` is also required but is only in `Suggests`,
+> so install it explicitly:
+>
+> ```r
+> install.packages("arrow")
+> remotes::install_github("RaredonLab/NICHESv2", ref = "dev")
+> ```
+>
+> **Coordinates must be in the same units the platform reader reports.**
+> `export_to_TissuePlex()` copies `meta.data$x` / `$y` straight into `x1,y1,x2,y2` with no
+> conversion, and TissuePlex divides those by the dataset's `pixel_size` on the assumption
+> they are native µm. That is correct for Xenium, whose coordinates are already µm. For a
+> platform whose coordinates are in **pixels** (Visium HD), convert to µm *before* calling
+> `create_NICHESObject()`, or the edge layer will be offset from the cells by a factor of
+> `pixel_size`.
 
 The format is **platform-agnostic** — it works with Xenium, MERSCOPE, CosMx, Visium HD, or any other platform as long as the `sending_cell` / `receiving_cell` barcodes match those in the platform's cell/spot table.
 
@@ -41,14 +58,21 @@ TissuePlex discovers `edges.parquet` automatically — no configuration needed. 
 | `x2` | float | Receiving unit centroid X |
 | `y2` | float | Receiving unit centroid Y |
 
-### Optional but recommended
+### Cell-type columns
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `sending_type` | string | Cell/spot type label for the sending unit |
 | `receiving_type` | string | Cell/spot type label for the receiving unit |
 
-Any additional numeric or string columns are automatically available as metadata color-by options in the edge layer panel.
+`export_to_TissuePlex()` **always writes these two columns**, so a file it produces has
+exactly the 16 columns above, in that order. Their *values* are `NA` when
+`celltype.col = NULL`, or when the named column is absent from `$edge.meta` (the exporter
+warns and fills NA rather than failing). They are optional only for a hand-written
+`edges.parquet`.
+
+Any additional numeric or string columns are automatically available as metadata color-by
+options in the edge layer panel.
 
 ---
 
@@ -67,18 +91,62 @@ cellA|cellB       cellA         cellB           Il6|Il6ra       2.4    0.40
 cellA|cellB       cellA         cellB           Wnt5a|Fzd1      1.5    0.25
 ```
 
+### Unscored edges carry a placeholder row
+
+`export_to_TissuePlex()` exports **every** edge in `$edge.list`, not only those with
+signal. An edge present in `$edge.list` but absent from `$edge.data` gets a **single row**
+with all six LRM/score fields null:
+
+```
+edge              sending_cell  receiving_cell  lrm   lrm_id  ligand  receptor  score  score_norm
+cellC|cellD       cellC         cellD           NA    NA      NA      NA        NA     NA
+```
+
+This is deliberate, not corrupt output: it lets TissuePlex draw the complete tissue graph —
+which cell pairs are neighbours at all — independently of which pairs have ligand-receptor
+signal. That is exactly the split between the **Tissue Graph** layer (structure) and the
+**Edges** layer (signal).
+
+Consequences worth knowing:
+
+- A real file routinely contains rows where `lrm`, `lrm_id`, `ligand`, `receptor`, `score`
+  and `score_norm` are all null. The backend expects this: the LRM catalogue query filters
+  `WHERE lrm IS NOT NULL`, the `excluded_lrms` list strips nulls, and the Pydantic model
+  uses `List[Optional[str]]` so a null cannot trigger a 422.
+- Any validation you write must use `na.rm = TRUE`. Checking `min(score)` or that
+  `score_norm` sums to 1.0 per edge without it returns `NA`/`FALSE` whenever placeholders
+  exist — i.e. almost always. The demo script bundled with NICHESv2 has this bug; it looks
+  like a failed export when nothing is wrong.
+
 ---
 
 ## Coordinate system
 
-`x1`, `y1`, `x2`, `y2` should be in the **native coordinate system** of the platform (typically µm). The backend converts to image pixel coordinates using the `pixel_size` reported by each platform's reader.
+`x1`, `y1`, `x2`, `y2` must be in **microns**, on every platform. The backend always divides
+them by that dataset's `pixel_size` to reach image pixel space, so anything already in
+pixels lands wrong by exactly that factor.
 
-| Platform | Coordinate source |
-|---|---|
-| Xenium | `x_centroid`, `y_centroid` from `cells.parquet` |
-| MERSCOPE | `center_x`, `center_y` from `cell_metadata.csv` |
-| CosMx | `x_global_px`, `y_global_px` from metadata (already in pixels) |
-| Visium HD | `pxl_col_in_fullres`, `pxl_row_in_fullres` from `tissue_positions.parquet` |
+This is the single easiest thing to get wrong, because some platforms report their cell
+coordinates in pixels rather than µm. Convert before building the NICHESObject:
+
+| Platform | Cell coordinate source | Native unit | To get µm for `x1..y2` |
+|---|---|---|---|
+| Xenium | `x_centroid`, `y_centroid` (`cells.parquet`) | µm | use as-is |
+| seqFISH | `center_x`, `center_y` (`*_CellCoordinates.csv`) | µm *(usually — see note)* | use as-is |
+| MERSCOPE | `center_x`, `center_y` (`cell_metadata.csv`) | µm | use as-is |
+| CosMx | `x_global_px`, `y_global_px` | **pixels** | × `pixel_size` (≈0.18) |
+| Visium HD | `pxl_col_in_fullres`, `pxl_row_in_fullres` | **pixels** | × `microns_per_pixel` (`scalefactors_json.json`) |
+
+The `pixel_size` each reader reports is on `GET /spatial/{dataset}/info`, so you can read
+the exact value rather than relying on the defaults above.
+
+> **seqFISH caveat.** Its CSV coordinates are µm in current GenePS exports but pixels in
+> some older ones, and the reader auto-detects which per table (it logs the verdict on
+> load). Check the backend log for that dataset before assuming.
+
+A quick way to confirm you got it right: the edge layer should sit exactly on top of the
+cell layer. A uniform scale mismatch between the two — edges clustered near the origin, or
+spread far beyond the tissue — is this bug rather than a rendering fault.
 
 ---
 

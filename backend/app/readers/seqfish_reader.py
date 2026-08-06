@@ -58,7 +58,7 @@ from typing import Optional
 
 import pandas as pd
 
-from app.readers import duck
+from app.readers import duck, spatial_cache
 from app.readers.base_reader import _UNSET, SpatialDatasetReader
 
 # Fallback when the DAPI OME-XML carries no PhysicalSizeX. This is the documented
@@ -338,7 +338,11 @@ class SeqfishReader(SpatialDatasetReader):
         cols = duck.csv_columns(path)
         if not {"x", "y"} <= set(cols):
             return {"transcripts": [], "total": 0}
-        src = duck.scan_csv(path)
+        # For seqFISH this does double duty: CSV cannot be range-scanned or
+        # row-group pruned at all, so the cache converts to parquet *and* sorts
+        # spatially in one pass. Falls back to the CSV transparently.
+        path = spatial_cache.sorted_path(path, self.path, "x", "y") or path
+        src = duck.scan_any(path)
 
         # Detect units from the full extent once, then express the bbox in the
         # file's own space so the predicate can be pushed into the scan.

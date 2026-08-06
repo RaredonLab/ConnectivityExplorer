@@ -55,6 +55,8 @@ backend/__pycache__/
 backend/app/**/__pycache__/
 **/*.pyc
 backend/.dzi_cache/
+.tissueplex_cache/
+**/.tissueplex_cache/
 .env
 .env.prod
 .claude/

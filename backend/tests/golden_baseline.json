@@ -504,10 +504,10 @@
       "has_transcripts": true,
       "unit_label": "cell"
     },
-    "cell_detail_0": "a19b5b2640d2fabc",
+    "cell_detail_0": "25ca1be475fb76eb",
     "cell_expression_0": {
-      "digest": "232ef4b1b7d7d7ff",
-      "n": 10
+      "digest": "a21358674d54a7f2",
+      "n": 36
     },
     "cells_all": {
       "digest": "3041ba131e9fb3b6",
@@ -548,9 +548,64 @@
       "n": 36,
       "type": "continuous"
     },
+    "edge__edges.parquet__catalogue": {
+      "digest": "24dd3ff8d4361233",
+      "n": 30
+    },
+    "edge__edges.parquet__color_lrm": {
+      "digest": "147980b074db33d3"
+    },
+    "edge__edges.parquet__detail0": "78d7e0433da4808e",
+    "edge__edges.parquet__grouped": {
+      "digest": "95d8d03ded9a9ecb",
+      "keys": [
+        "edge",
+        "is_autocrine",
+        "lrm_count",
+        "receiving_cell",
+        "receiving_type",
+        "score_sum",
+        "sending_cell",
+        "sending_type",
+        "x1",
+        "x2",
+        "y1",
+        "y2"
+      ],
+      "n": 250
+    },
+    "edge__edges.parquet__schema": {
+      "columns": {
+        "edge": "string",
+        "is_autocrine": "bool",
+        "ligand": "string",
+        "lrm": "string",
+        "lrm_id": "int32",
+        "receiving_cell": "string",
+        "receiving_type": "string",
+        "receptor": "string",
+        "score": "double",
+        "score_norm": "double",
+        "sending_cell": "string",
+        "sending_type": "string",
+        "x1": "double",
+        "x2": "double",
+        "y1": "double",
+        "y2": "double"
+      }
+    },
+    "edge__edges.parquet__scores": {
+      "digest": "9f9058198fb1830f",
+      "keys": [
+        "edge",
+        "visible_lrm_count",
+        "visible_score_sum"
+      ],
+      "n": 250
+    },
     "gene_list": {
-      "digest": "db5cf5f57e896e74",
-      "n": 10
+      "digest": "66064248776a3e2f",
+      "n": 36
     },
     "info_keys": [
       "format_variant",
@@ -563,37 +618,37 @@
     "pixel_size": 0.107161,
     "platform": "seqfish",
     "tx_bbox": {
-      "digest": "ec4a84b78368cbf6",
+      "digest": "36efb1f9c5aa2e08",
       "keys": [
         "feature_name",
         "x_location",
         "y_location"
       ],
-      "n": 365,
-      "total": 365
+      "n": 1512,
+      "total": 1512
     },
     "tx_bbox_half": {
-      "digest": "4744fb8b1a6cf5f6",
+      "digest": "31024d3a61b1ba36",
       "keys": [
         "feature_name",
         "x_location",
         "y_location"
       ],
-      "n": 182,
-      "total": 365
+      "n": 756,
+      "total": 1512
     },
     "tx_full": {
-      "digest": "973faff05f3a175c",
+      "digest": "bfe5e6481e985a84",
       "keys": [
         "feature_name",
         "x_location",
         "y_location"
       ],
-      "n": 2550,
-      "total": 2550
+      "n": 10026,
+      "total": 10026
     },
     "tx_gene0": {
-      "digest": "8081db8d41ee4c2e",
+      "digest": "e723802d142919aa",
       "keys": [
         "feature_name",
         "x_location",
@@ -602,6 +657,147 @@
       "n": 258,
       "total": 258
     }
+  },
+  "visium_hd_tiny": {
+    "bounds_full": {
+      "digest": "cd35b92208180b99",
+      "keys": [
+        "cell_id",
+        "vertex_x",
+        "vertex_y"
+      ],
+      "n": 83320,
+      "n_cells": 20830,
+      "total": 20830
+    },
+    "bounds_half": {
+      "digest": "95081e497eddedcf",
+      "n": 41660,
+      "n_cells": 10415,
+      "total": 20830
+    },
+    "capabilities": {
+      "has_boundaries": true,
+      "has_morphology": true,
+      "has_transcripts": false,
+      "unit_label": "bin"
+    },
+    "cell_detail_0": "335cd56d146cb6f7",
+    "cell_expression_0": {
+      "digest": "44136fa355b3678a",
+      "n": 0
+    },
+    "cells_all": {
+      "digest": "86c7b0d0860673e8",
+      "keys": [
+        "array_col",
+        "array_row",
+        "cell_id",
+        "x_centroid",
+        "y_centroid"
+      ],
+      "n": 20830
+    },
+    "cells_schema": {
+      "columns": {
+        "array_col": "uint32",
+        "array_row": "uint32",
+        "x_centroid": "float64",
+        "y_centroid": "float64"
+      }
+    },
+    "color_gene_set": {
+      "digest": "654b57fb083efe14",
+      "max": 1.0,
+      "min": 0.0,
+      "n": 20830,
+      "type": "continuous"
+    },
+    "color_meta__array_row": {
+      "digest": "e437cf85ebbc2bf8",
+      "n": 20830,
+      "type": "continuous"
+    },
+    "color_meta__x_centroid": {
+      "digest": "c41021fad7667686",
+      "n": 20830,
+      "type": "continuous"
+    },
+    "color_meta__y_centroid": {
+      "digest": "026a12c0bd52c1d9",
+      "n": 20830,
+      "type": "continuous"
+    },
+    "edge__edges.parquet__catalogue": {
+      "digest": "c3b1db00289e94db",
+      "n": 69
+    },
+    "edge__edges.parquet__color_lrm": {
+      "digest": "d64c43b4d5cff51c"
+    },
+    "edge__edges.parquet__detail0": "89d54bdc782c25cb",
+    "edge__edges.parquet__grouped": {
+      "digest": "8a6fa8e717282f31",
+      "keys": [
+        "edge",
+        "is_autocrine",
+        "lrm_count",
+        "receiving_cell",
+        "receiving_type",
+        "score_sum",
+        "sending_cell",
+        "sending_type",
+        "x1",
+        "x2",
+        "y1",
+        "y2"
+      ],
+      "n": 66001
+    },
+    "edge__edges.parquet__schema": {
+      "columns": {
+        "edge": "string",
+        "is_autocrine": "bool",
+        "ligand": "string",
+        "lrm": "string",
+        "lrm_id": "int32",
+        "receiving_cell": "string",
+        "receiving_type": "string",
+        "receptor": "string",
+        "score": "double",
+        "score_norm": "double",
+        "sending_cell": "string",
+        "sending_type": "string",
+        "x1": "double",
+        "x2": "double",
+        "y1": "double",
+        "y2": "double"
+      }
+    },
+    "edge__edges.parquet__scores": {
+      "digest": "5752b4d3df1bab85",
+      "keys": [
+        "edge",
+        "visible_lrm_count",
+        "visible_score_sum"
+      ],
+      "n": 66001
+    },
+    "gene_list": {
+      "digest": "40a2e076472f6c63",
+      "n": 32245
+    },
+    "info_keys": [
+      "available_bins",
+      "bin",
+      "bin_side_px",
+      "bin_size_um",
+      "pixel_size",
+      "platform",
+      "tissue_hires_scalef"
+    ],
+    "pixel_size": 1.003128,
+    "platform": "visium_hd"
   },
   "xenium_human_breast_2fov": {
     "bounds_full": {
@@ -740,6 +936,61 @@
       ],
       "n": 44759
     },
+    "edge__edges__niches_rad30.parquet__catalogue": {
+      "digest": "931e3a76e6dcb943",
+      "n": 32
+    },
+    "edge__edges__niches_rad30.parquet__color_lrm": {
+      "digest": "f746905c1d52f0aa"
+    },
+    "edge__edges__niches_rad30.parquet__detail0": "0635850ff026fa23",
+    "edge__edges__niches_rad30.parquet__grouped": {
+      "digest": "d2e6d82664d037f3",
+      "keys": [
+        "edge",
+        "is_autocrine",
+        "lrm_count",
+        "receiving_cell",
+        "receiving_type",
+        "score_sum",
+        "sending_cell",
+        "sending_type",
+        "x1",
+        "x2",
+        "y1",
+        "y2"
+      ],
+      "n": 181523
+    },
+    "edge__edges__niches_rad30.parquet__schema": {
+      "columns": {
+        "edge": "string",
+        "is_autocrine": "bool",
+        "ligand": "string",
+        "lrm": "string",
+        "lrm_id": "int32",
+        "receiving_cell": "string",
+        "receiving_type": "string",
+        "receptor": "string",
+        "score": "double",
+        "score_norm": "double",
+        "sending_cell": "string",
+        "sending_type": "string",
+        "x1": "double",
+        "x2": "double",
+        "y1": "double",
+        "y2": "double"
+      }
+    },
+    "edge__edges__niches_rad30.parquet__scores": {
+      "digest": "faa8387261bbb51a",
+      "keys": [
+        "edge",
+        "visible_lrm_count",
+        "visible_score_sum"
+      ],
+      "n": 181523
+    },
     "gene_list": {
       "digest": "bfd0eef30077d962",
       "n": 280
@@ -783,7 +1034,7 @@
     "pixel_size": 0.2125,
     "platform": "xenium",
     "tx_bbox": {
-      "digest": "958f4de8b1dd19b3",
+      "digest": "bd94661711d7cd2d",
       "keys": [
         "feature_name",
         "qv",
@@ -794,7 +1045,7 @@
       "total": 228952
     },
     "tx_bbox_half": {
-      "digest": "cfbe3c924fa10464",
+      "digest": "533e723da47274dc",
       "keys": [
         "feature_name",
         "qv",

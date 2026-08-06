@@ -38,7 +38,12 @@ def _is_xenium(path: Path) -> bool:
 
 
 def _is_visium_hd(path: Path) -> bool:
-    return any(path.glob("square_???um"))
+    # Space Ranger nests the bin directories under binned_outputs/. The bare
+    # top-level glob is kept as a fallback for hand-assembled folders, but real
+    # Space Ranger output only ever matches the first form — globbing the root
+    # alone silently failed to detect any genuine Visium HD dataset.
+    return (any(path.glob("binned_outputs/square_*um"))
+            or any(path.glob("square_???um")))
 
 
 def _is_merscope(path: Path) -> bool:

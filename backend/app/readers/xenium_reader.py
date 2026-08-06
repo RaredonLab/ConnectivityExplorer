@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
 
-from app.readers import duck
+from app.readers import duck, spatial_cache
 from app.readers.base_reader import _UNSET, SpatialDatasetReader
 
 # Hard ceiling on transcripts returned in one response, independent of `fraction`.
@@ -107,6 +107,10 @@ class XeniumReader(SpatialDatasetReader):
         cols = duck.columns(path)
         if not {"x_location", "y_location"} <= cols:
             return {"transcripts": [], "total": 0}
+        # Query the spatially-sorted copy when one exists, so the bbox predicate
+        # can actually skip row groups. Falls back to `path` transparently.
+        path = spatial_cache.sorted_path(
+            path, self.path, "x_location", "y_location") or path
         # qv is absent from some exports — select only what the file actually has.
         select_cols = [c for c in ("x_location", "y_location", "feature_name", "qv")
                        if c in cols]
@@ -221,6 +225,7 @@ class XeniumReader(SpatialDatasetReader):
         y_col = next((c for c in cols if "vertex_y" in c), None)
         if not x_col or not y_col or "cell_id" not in cols:
             return {"boundaries": [], "total": 0}
+        path = spatial_cache.sorted_path(path, self.path, x_col, y_col) or path
 
         bbox_sql, bbox_params = duck.bbox_predicate(
             x_col, y_col, self._bbox_to_native(bbox) if bbox else None

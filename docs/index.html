@@ -588,12 +588,12 @@ xenium_obj &lt;- LoadXenium("/path/to/your/xenium-dataset")
 niches_result &lt;- RunNICHES(xenium_obj, ...)
 
 # 3. Export for TissuePlex (writes edges.parquet to the dataset folder)
-export_for_TissuePlex(
+export_to_TissuePlex(
   niches_result,
   output_dir = "/path/to/your/xenium-dataset"
 )</code></pre>
 
-    <p><code>export_for_TissuePlex()</code> writes <code>edges.parquet</code>
+    <p><code>export_to_TissuePlex()</code> writes <code>edges.parquet</code>
     to your dataset folder. The resulting structure:</p>
 
     <div class="tree">my-experiment-2024/

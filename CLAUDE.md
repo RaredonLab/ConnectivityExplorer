@@ -54,7 +54,7 @@ The backend uses an abstract reader pattern. All platform readers inherit from
 | Platform | Sentinel file |
 |---|---|
 | Xenium (10x Genomics) | `experiment.xenium` |
-| Visium HD (10x Genomics) | a `square_???um/` subdirectory |
+| Visium HD (10x Genomics) | `binned_outputs/square_*um/` (or a top-level `square_???um/`) |
 | MERSCOPE (Vizgen) | `cell_by_gene.csv` or `cell_metadata.csv` |
 | CosMx (Nanostring) | `*_tx_file.csv` |
 | seqFISH (Spatial Genomics) | `*_CellCoordinates*.csv` — a glob, so registered **last** |
@@ -70,10 +70,9 @@ and boundary layers rather than returning empty arrays for them.
 
 **Implementation status:**
 - Xenium: fully implemented
-- Visium HD: bins as points (`cells`, `cells_schema`, `cell_detail` from
-  `tissue_positions.parquet`); declares `has_transcripts: False`, `has_boundaries: False`,
-  `unit_label: "bin"`. `gene_list`, `cell_expression`, and gene-set color-values are stubs
-  pending `filtered_feature_bc_matrix.h5` parsing.
+- Visium HD: implemented against a real Space Ranger 4.0.1 `outs/` tree — bins, bin
+  outlines, expression, and both color-value modes. `has_transcripts: False` (bin-level
+  UMI counts only, no molecule coordinates); `unit_label: "bin"`. See its own section.
 - MERSCOPE: cells, transcripts, genes, color-values (metadata + gene-set) implemented;
   `cell_boundaries()` returns empty and `has_boundaries: False` (HDF5 polygon format
   not yet parsed)
@@ -87,13 +86,9 @@ and boundary layers rather than returning empty arrays for them.
   dependency. See the seqFISH section below — its coordinate handling is unlike any other
   reader and is the thing to understand before touching it.
 
-**Interface caveat**: `VisiumHDReader.transcripts()` and `.cell_boundaries()` still carry
-the pre-refactor signature (`limit=` instead of `fraction=`, returning `[]` instead of the
-`{"transcripts"/"boundaries": [...], "total": N}` dict every other reader returns). The
-router calls them with `fraction=`, so a direct call would raise `TypeError`. It is
-unreachable today only because the capability flags stop the frontend from asking. Fix the
-signatures before relying on those flags. Note also that `base_reader.py`'s docstrings
-still say `cell_boundaries -> list[dict]` while every implementation returns the dict form.
+**Interface note**: every reader now matches the base signature (`fraction=`, dict return).
+`base_reader.py`'s docstring for `cell_boundaries` still says `-> list[dict]` while all
+implementations return the dict form — the docstring is the thing that is wrong.
 
 ---
 
@@ -118,7 +113,8 @@ backend/
       seqfish_reader.py      seqFISH / Spatial Genomics GenePS; v2 full, v1 partial.
                              Mixed µm/pixel coordinate handling — see its own section.
       duck.py                Shared DuckDB query helpers used by the spatial readers
-      visium_hd_reader.py    Visium HD implementation — bins as points; partial (see status above)
+      spatial_cache.py       Spatially-sorted parquet cache (build on first access)
+      visium_hd_reader.py    Visium HD — bins as square polygons; see its own section
       merscope_reader.py     MERSCOPE implementation (inherits SpatialDatasetReader)
       cosmx_reader.py        CosMx implementation (inherits SpatialDatasetReader)
       edge_reader.py         reads edges.parquet; query_grouped(), query_scores(), lrm_catalogue(), edge_color_values(), edge_detail();
@@ -131,7 +127,7 @@ backend/
   Dockerfile
   tests/
     golden_snapshot.py       Reader regression guard — see Development Workflow
-    golden_baseline.json     Recorded baseline (100 probes / 4 datasets)
+    golden_baseline.json     Recorded baseline (133 probes / 5 datasets)
 
 frontend/
   src/
@@ -171,11 +167,12 @@ sample_data/                 Partially gitignored — default data mount for loc
                              and licence-restricted datasets are ignored.
   make_edges.py              Synthetic edges.parquet generator
   make_seqfish.py            Synthetic seqFISH v2 ROI generator (committable fixture)
-r/                           Personal analysis scripts with hardcoded paths — a pipeline,
-                             not reusable functions. Run in this order:
-  ExportMetaDataforTissuePlex.R      dump a Seurat @meta.data to CSV
-  run_NICHESv2_Xenium_PPLR.R         run NICHESv2 (rad=25, method="product") → .rds
-  export_NICHES_for_TissuePlex_PPLR.R  call export_to_TissuePlex(), validate the parquet
+r/                           NICHESv2 → edges.parquet. See r/README.md.
+  niches_xenium.R            Xenium — coordinates already µm; read this one first
+  niches_seqfish.R           seqFISH — dense CSV counts, per-version coordinate units
+  niches_visium_hd.R         Visium HD — pixel coordinates, must convert to µm
+  niches_common.R            shared helpers (10x h5 reader, LR-coverage check, validation)
+  *_PPLR.R                   older personal pipeline with hardcoded paths; reference only
 docs/
   data_format.md             edges.parquet column spec for NICHESv2 R export
   setup.md                   Docker deployment guide (lab-facing)
@@ -215,7 +212,7 @@ Platform-agnostic — works with any spatial dataset as long as cell barcodes ma
 `pixel_size` (from the reader) when serving to the frontend.
 
 The `sample_data/make_edges.py` script generates synthetic demo data in this format.
-Real data comes from `export_for_TissuePlex()` in the NICHESv2 R package.
+Real data comes from `export_to_TissuePlex()` in the NICHESv2 R package.
 
 ---
 
@@ -624,6 +621,60 @@ pre-computed server-side.
 
 ---
 
+## Visium HD (readers/visium_hd_reader.py)
+
+Space Ranger tiles the capture area with square bins at 2/8/16 µm. There are no
+per-molecule detections — only bin-level UMI counts.
+
+```
+dataset_dir/
+  binned_outputs/
+    square_008um/               ← the bin directories live HERE, not at the top level
+      filtered_feature_bc_matrix.h5
+      spatial/
+        tissue_positions.parquet    barcode, in_tissue, array_row, array_col,
+                                    pxl_row_in_fullres, pxl_col_in_fullres
+        scalefactors_json.json      microns_per_pixel, spot_diameter_fullres,
+                                    bin_size_um, tissue_hires_scalef, …
+        tissue_hires_image.png      morphology — a PNG, not a TIFF
+  spatial/                      the same images again (duplicated into every bin dir too)
+  segmented_outputs/            Space Ranger 4.x: real cell polygons as GeoJSON
+```
+
+Three things about this layout bite:
+
+- **`square_*um/` is nested under `binned_outputs/`.** The detector originally globbed the
+  dataset root, so no genuine Space Ranger output was ever detected.
+- **`tissue_positions.parquet` and `scalefactors_json.json` are per bin.** The top-level
+  `spatial/` folder holds images only.
+- **Morphology is a PNG.** The tile pipeline was TIFF-only; `_SOURCE_EXTS` and
+  `spatial._TIFF_EXTS` now include `.png`, and `_build_dzi_pillow()` handles it when
+  libvips is unavailable (the tifffile fallback cannot open a PNG).
+
+**Bins are served as square polygons.** A bin is literally a square of side
+`spot_diameter_fullres`, so `cell_boundaries()` emits four vertices per bin instead of
+declaring `has_boundaries: False`. This matters because **nothing renders `cells()`
+centroids** — the boundary layers are the only path to drawing a unit — so a points-only
+Visium HD reader would show an empty canvas. Emitting squares makes fill, outline,
+colour-by, picking and region selection all work through the existing layers with no
+frontend change at all.
+
+**Coordinates.** `pxl_col/row_in_fullres` are already full-resolution image pixels, which
+is exactly TissuePlex's contract, so they pass through untouched. `pixel_size` is
+`microns_per_pixel` from the scalefactors and is used only to label distances.
+
+The bundled fixture **cannot catch a missing scalefactor multiply**: it has
+`tissue_hires_scalef = 1.0` and `microns_per_pixel = 1.003`, both effectively identity.
+Real datasets run ~0.02–0.2 and ~0.25. A passing render here is necessary, not sufficient —
+see `sample_data/visium_hd_tiny/PROVENANCE.md`.
+
+Bin selection defaults to `square_008um` (Space Ranger's own analysis default, and
+`spatialdata-io`'s `DEFAULT_BIN`), falling back to the coarsest bin present. `info()`
+reports `bin` and `available_bins`; exposing bin choice in the UI would be the natural
+follow-up, in the shape of the edge-file picker.
+
+---
+
 ## seqFISH / Spatial Genomics (readers/seqfish_reader.py)
 
 "seqFISH" names two unrelated things. The academic Cai-lab method has no standard output
@@ -713,6 +764,51 @@ under the old path would OOM well before it was slow. DuckDB is somewhat *slower
 because the file is not spatially sorted (see What's Not Built Yet #1) — pruning cannot
 skip anything, so it pays predicate-evaluation cost without the row-group savings. Fixing
 the layout closes that gap and then some.
+
+### Spatial index cache (readers/spatial_cache.py)
+
+Streaming fixed memory but not speed, because the bbox predicate could not prune:
+Xenium writes `transcripts.parquet` in acquisition order with huge row groups (the
+bundled breast dataset is 1.1M rows in **2** row groups, the first spanning the whole
+x-range), so statistics exclude nothing.
+
+`spatial_cache.sorted_path()` rewrites the file sorted by a coarse spatial grid with
+100K-row row groups, cached on disk and rebuilt when the source changes — the same
+"derive an artifact on first access" pattern `ensure_pyramid` uses. Measured:
+
+| Path | uncached | cached | |
+|---|---|---|---|
+| Xenium transcripts (600 MB, 40M rows) | 1180 ms | **44 ms** | 27× |
+| seqFISH transcripts (229 MB CSV, 8M rows) | 1595 ms | **156 ms** | 10× |
+| Xenium boundaries (40 MB, 3.6M vertices) | 102 ms | 73 ms | 1.4× |
+
+Boundaries gain least by design: half that query is a `cell_id` semi-join to pull whole
+polygons, which spatial sorting cannot help. For seqFISH the cache also converts CSV to
+parquet, which is why it helps a format that cannot be range-scanned at all.
+
+Four things to know:
+
+- **`bbox_predicate()` inlines the bounds as SQL literals, and that is load-bearing.**
+  DuckDB prunes row groups at plan time; with `?` parameters the values are unknown then,
+  so it cannot prune. Measured on the sorted file: COUNT 6.8 ms with literals vs 155 ms
+  bound; SELECT 35 ms vs 321 ms. On an unsorted file the two are identical, which is why
+  this only started to matter once the cache existed. Inlining is safe because every value
+  goes through `float()` and non-finite values are rejected — string filters such as gene
+  names still go through `in_predicate()`. `edge_reader.py` still binds its bbox; that
+  costs nothing today because edge parquet is unsorted, but it would have to change before
+  an edge spatial index would pay off.
+- **Small files are skipped** (`SPATIAL_CACHE_MIN_BYTES`, default 64 MB). Below that the
+  build cost and extra disk are not repaid. This also keeps the bundled sample datasets
+  uncached, so the golden baseline does not depend on whether a cache happens to exist.
+- **A failed build returns None and the query uses the source file**, so indexing can
+  never make a dataset unreadable. `SPATIAL_CACHE=0` disables it entirely.
+- **Cache validity covers the sort columns, not just the source stamp.** The cache
+  filename derives from the source stem alone, so without that check a file sorted on one
+  column pair would be served for a query on another — sorted by the wrong axis, silently.
+
+Row *order* differs between a sorted file and its source, so seeded reservoir sampling
+draws a different subset. Totals and filter results are unaffected; it is only why
+enabling the cache moves the sampled golden probes.
 
 Things to preserve when editing these methods:
 
@@ -817,6 +913,10 @@ output folder under `DATA_PATH` — TissuePlex auto-detects the platform on firs
 Tuning knobs live in a `.env.prod` file that is gitignored and must be created by hand;
 `DUCKDB_MEMORY_LIMIT` is the one to reach for if the backend OOMs on large edge files.
 
+Other env knobs: `SPATIAL_CACHE=0` disables the spatial index entirely,
+`SPATIAL_CACHE_MIN_BYTES` (default 64 MB) sets the size below which files are left alone,
+and `CACHE_DIR` relocates both the DZI pyramids and the spatial index off the data volume.
+
 **Access control is opt-in and off by default.** The Caddyfile supports `basicauth`, but
 unless it is enabled anyone with the URL can view the data. There is no application-level
 auth, no user accounts, and no per-dataset permissions.
@@ -900,20 +1000,12 @@ which it does not cover at all.
 
 ## What's Not Built Yet
 
-1. **Spatial queries are not yet spatially indexed.** `transcripts()` and
-   `cell_boundaries()` now stream through DuckDB (see the Spatial Query Path section),
-   which fixed the memory problem, but **row-group pruning does not currently help**:
-   Xenium writes `transcripts.parquet` in row order, not spatial order, with very large
-   row groups. Measured on the bundled breast dataset — 1.1M rows in **2** row groups,
-   the first spanning the entire x-range. DuckDB therefore still scans every row to
-   evaluate the bbox predicate.
-
-   Sorting the file spatially and rewriting it with small row groups makes the statistics
-   selective and is dramatically faster. Measured on a synthetic 40M-row / 0.78 GB file,
-   zoomed-in viewport query: **COUNT 206 ms → 9 ms, SELECT 1010 ms → 29 ms**, for a
-   one-time 4.1 s sort. That is the natural next step, and it fits the existing
-   "build a derived artifact on first access and cache it" pattern that `ensure_pyramid`
-   already uses for tiles.
+1. **Edge queries are not spatially indexed.** `transcripts()` and `cell_boundaries()`
+   now go through `spatial_cache` (see the Spatial Query Path section), but `EdgeReader`
+   does not. Two things would need to change: sort `edges.parquet` on `x1`/`y1`, and stop
+   binding its bbox as `?` parameters, which defeats row-group pruning. Less urgent than
+   it was for transcripts, because `query_grouped` already collapses the row count
+   server-side.
 
 2. **Supplemental cell metadata is not shown in the cell info panel** — `CellInfoPanel.jsx`
    renders a hardcoded field list (`cell_id`, x, y, `transcript_counts`, `total_counts`,
