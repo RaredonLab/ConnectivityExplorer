@@ -2,48 +2,116 @@ import { create } from "zustand";
 
 const API = import.meta.env.VITE_API_URL ?? "/api";
 
+/**
+ * One panel's dataset-bound state.
+ *
+ * `dataset: null` on init; DatasetPicker fills it from /spatial/datasets.
+ * Everything else is derived from whichever dataset is loaded, which is exactly
+ * why it cannot live at the top level once two panels can show two datasets:
+ * image dimensions, pixel size, capabilities, gene panel, LRM vocabulary and
+ * value ranges all differ between them.
+ */
+function makePanel() {
+  return {
+    dataset: null,
+    activeImage: null,
+    imageSize: { w: null, h: null },     // from the DZI descriptor, when OSD opens
+    platformCapabilities: null,          // /spatial/{ds}/info -> has_transcripts, unit_label, …
+    pixelSize: 1.0,                      // µm per image pixel; drives measurement + zoom match
+    edgeFile: "edges.parquet",
+    lrmCatalogue: [],
+    allGenes: [],
+    genesLoaded: false,
+    cellColorRange: { vmin: null, vmax: null },
+    edgeColorRange: { vmin: null, vmax: null },
+    cellColorType: "continuous",
+    cellColorCategories: [],
+    transcriptStats: { shown: 0, total: 0 },
+    cellBoundaryStats: { shown: 0, total: 0 },
+  };
+}
+
 export const useStore = create((set, get) => ({
-  // ── Dataset ────────────────────────────────────────────────────────────────
   apiBase: API,
-  dataset: null,             // initialized from /spatial/datasets on first load
-  activeImage: "morphology", // which OME-TIFF is loaded as the background
 
-  // edgeFile: which edge-source parquet the app renders. "edges.parquet" is the
-  // legacy top-level default; multiple sets live under the dataset's edges/ folder
-  // and are identified as "edges/<name>.parquet" (see issue #46). Applies to all
-  // open viewer panels — the single sidebar drives every panel equally.
-  edgeFile: "edges.parquet",
+  // ══ Per-panel state ═══════════════════════════════════════════════════════
+  //
+  // Everything here is bound to *a dataset*, so with two panels showing two
+  // datasets it cannot be global. Style and choice settings (layer opacity,
+  // palettes, filters, colour-by) stay global for now: one sidebar drives both
+  // panels, which is what makes a side-by-side comparison comparable. Phase 2
+  // splits those per panel behind sidebar tabs.
+  //
+  // Read as `panels[panelIndex]`. Panel 1 exists even in single mode so nothing
+  // has to guard on panelCount.
+  panels: [makePanel(), makePanel()],
 
-  // Switching datasets resets all edge-file-scoped state so a stale LRM catalogue,
-  // filter, selection, or color range from the previous dataset never leaks through.
-  // activeImage is cleared too: image names are platform-specific ("morphology" on
-  // Xenium, "Roi1_DAPI" on seqFISH), and DatasetPicker only learns the new dataset's
-  // image list asynchronously. Without this, OSD spends that window requesting the
-  // previous dataset's image from the new one and logging 404s.
-  setDataset: (dataset) => set({
-    dataset, activeImage: null,
-    selectedGenes: null, allGenes: [], genesLoaded: false,
-    platformCapabilities: null, categoryColorOverrides: {}, transcriptColorOverrides: {},
-    edgeFile: "edges.parquet", lrmCatalogue: [], hiddenLrms: new Set(),
-    selectedEdge: null, edgeColorRange: { vmin: null, vmax: null },
-    edgeColorClamp: { low: null, high: null },
-    // Column names are dataset-specific, so a categorical override or an active
-    // filter naming a column the new dataset does not have would either do nothing
-    // or 400 on every viewport change.
-    categoricalOverrides: {}, cellFilter: null, edgeFilter: null,
+  // Generic shallow patch. Specific transitions that must reset dependent state
+  // (setPanelDataset, setPanelEdgeFile) are separate below.
+  patchPanel: (i, patch) => set((s) => {
+    const next = [...s.panels];
+    next[i] = { ...next[i], ...patch };
+    return { panels: next };
   }),
-  setActiveImage: (activeImage) => set({ activeImage }),
 
-  // Switching the edge file resets the same edge-scoped state: the LRM catalogue,
-  // hidden-LRM filter, current selection, and auto-computed color range/clamp are
-  // all specific to a given edges.parquet and must be re-derived for the new file.
-  setEdgeFile: (edgeFile) => set({
-    edgeFile, lrmCatalogue: [], hiddenLrms: new Set(), selectedEdge: null,
-    edgeColorRange: { vmin: null, vmax: null }, edgeColorClamp: { low: null, high: null },
-    // The edge filter names a column of the edge table, which differs between
-    // edge sources; the cell filter is unaffected because cells are shared.
-    edgeFilter: null,
+  // Switching a panel's dataset resets everything derived from the old one.
+  // activeImage is cleared because image names are platform-specific
+  // ("morphology" on Xenium, "Roi1_DAPI" on seqFISH), and the picker only learns
+  // the new list asynchronously — without this, OSD spends that window asking
+  // the new dataset for the old dataset's image and logging 404s.
+  setPanelDataset: (i, dataset) => set((s) => {
+    const next = [...s.panels];
+    next[i] = { ...makePanel(), dataset };
+    // Selections belong to a dataset; drop any that pointed at the old one.
+    const sel = s.selection && s.selection.panelIndex === i ? null : s.selection;
+    return {
+      panels: next,
+      selection: sel,
+      // The shared settings that name a *column, gene or mechanism* are reset by
+      // any panel's dataset change, even though they are shared. They have to be:
+      // a filter naming a column the new dataset lacks 400s on every viewport
+      // change, and a gene allowlist from a different panel is meaningless.
+      //
+      // The cost is that switching one panel's dataset clears the other panel's
+      // filter too. That is the honest consequence of one sidebar driving both,
+      // and it goes away in Phase 2 when these become per-panel.
+      selectedGenes: null,
+      hiddenLrms: new Set(),
+      categoricalOverrides: {},
+      cellFilter: null,
+      edgeFilter: null,
+      categoryColorOverrides: {},
+      transcriptColorOverrides: {},
+      colorBy: { mode: "off", field: null },
+      cellColorClamp: { low: null, high: null },
+      edgeColorClamp: { low: null, high: null },
+    };
   }),
+
+  // The LRM catalogue, colour range and edge filter are all specific to one
+  // edges.parquet and must be re-derived when the source changes.
+  setPanelEdgeFile: (i, edgeFile) => set((s) => {
+    const next = [...s.panels];
+    next[i] = {
+      ...next[i], edgeFile, lrmCatalogue: [],
+      edgeColorRange: { vmin: null, vmax: null },
+    };
+    const sel = s.selection && s.selection.panelIndex === i && s.selection.kind === "edge"
+      ? null : s.selection;
+    return { panels: next, selection: sel, hiddenLrms: new Set(), edgeFilter: null };
+  }),
+
+  // ── Selection ─────────────────────────────────────────────────────────────
+  // Carries the panel it came from, so the info panels know which dataset to
+  // query. Without that they would resolve a panel-1 click against panel 0's
+  // dataset and show the wrong cell.
+  //   { panelIndex, kind: "cell" | "edge", cell? , edge? }
+  selection: null,
+  setSelectedCell: (cell, panelIndex = 0) =>
+    set({ selection: cell ? { panelIndex, kind: "cell", cell } : null }),
+  setSelectedEdge: (edge, panelIndex = 0) =>
+    set({ selection: edge ? { panelIndex, kind: "edge", edge } : null }),
+  clearSelection: () => set({ selection: null }),
 
   // ── Categorical / continuous override (issue #35) ─────────────────────────
   // Keyed "cell::<field>" / "edge::<field>" → true | false. Absent means
@@ -66,29 +134,24 @@ export const useStore = create((set, get) => ({
   //
   // cellFilter also governs edges: an edge is drawn only when BOTH endpoints
   // survive it. edgeFilter is independent and applies to the edge table itself.
+
+  // ── Shared colour scale across panels ─────────────────────────────────────
+  // On by default, and this is a figure-integrity setting rather than a
+  // preference: two viridis panels that each auto-ranged to their own data look
+  // comparable and are not. Panel A's yellow might be 40 counts and panel B's
+  // 4,000. With this on, both panels map through one range computed across both,
+  // so the single legend describes everything on screen.
+  //
+  // Unlock it when one panel's range is so much narrower that shared scaling
+  // flattens it — then the panels are individually readable but not comparable,
+  // which is the trade you are making knowingly.
+  linkColorScale: true,
+  setLinkColorScale: (v) => set({ linkColorScale: v }),
+
   cellFilter: null,
   setCellFilter: (f) => set({ cellFilter: f }),
   edgeFilter: null,
   setEdgeFilter: (f) => set({ edgeFilter: f }),
-
-  // Resolved type of the active cell color-by column, reported by panel 0 so the
-  // LayerPanel can render the matching legend. The panel used to guess from the
-  // schema dtype, which disagreed with the backend for low-cardinality integers:
-  // the canvas drew discrete colors while the panel showed a gradient with two
-  // sliders that did nothing.
-  cellColorType: "continuous",
-  cellColorCategories: [],
-  setCellColorType: (type, categories) =>
-    set({ cellColorType: type, cellColorCategories: categories ?? [] }),
-
-  // ── Platform capabilities (fetched from /spatial/{dataset}/info) ──────────
-  // null = not yet loaded; object = { has_morphology, has_transcripts, has_boundaries, unit_label }
-  platformCapabilities: null,
-  setPlatformCapabilities: (caps) => set({ platformCapabilities: caps }),
-
-  // ── Image dimensions (from DZI descriptor, set when OSD opens) ───────────
-  imageSize: { w: null, h: null },
-  setImageSize: (w, h) => set({ imageSize: { w, h } }),
 
   // ── Viewport (image pixel coords, kept in sync with OpenSeadragon) ────────
   // One entry per panel; panel 1 is only used in split-screen mode.
@@ -147,15 +210,6 @@ export const useStore = create((set, get) => ({
   setCellBoundaryFraction: (v) => set({
     cellBoundaryFraction: v !== null ? Math.max(0.0001, Math.min(1.0, v)) : null,
   }),
-  // cellBoundaryStats: live sampled/total counts for the status display.
-  cellBoundaryStats: { shown: 0, total: 0 },
-  setCellBoundaryStats: (shown, total) => set({ cellBoundaryStats: { shown, total } }),
-
-  // ── Color range cache (updated from Viewer hooks for legend display) ──────
-  cellColorRange: { vmin: null, vmax: null },
-  setCellColorRange: (vmin, vmax) => set({ cellColorRange: { vmin, vmax } }),
-  edgeColorRange: { vmin: null, vmax: null },
-  setEdgeColorRange: (vmin, vmax) => set({ edgeColorRange: { vmin, vmax } }),
 
   // ── Color clamp / squish (oob::squish): values outside [low,high] map to palette ends) ──
   cellColorClamp: { low: null, high: null },
@@ -207,16 +261,12 @@ export const useStore = create((set, get) => ({
   autocrineLineWidth: 2,
   setAutocrineLineWidth: (v) => set({ autocrineLineWidth: v }),
 
-  // Selected edge (for info panel): "SendingCell|ReceivingCell" string or null
-  selectedEdge: null,
-  setSelectedEdge: (edge) => set({ selectedEdge: edge }),
-
   // ── LRM mechanism filter ───────────────────────────────────────────────────
-  // hiddenLrms: Set of "ligand|receptor" string IDs to suppress.
-  // lrmCatalogue: [{lrm_id, lrm, ligand, receptor}] loaded once from the backend.
+  // Shared across panels and keyed on the "ligand|receptor" string, so a
+  // mechanism present in both datasets is one checkbox governing both — which is
+  // the point of a comparison. The catalogue it is checked against is per panel
+  // (panels[i].lrmCatalogue); the sidebar shows the union.
   hiddenLrms: new Set(),
-  lrmCatalogue: [],
-  setLrmCatalogue: (cat) => set({ lrmCatalogue: cat }),
   toggleLrm: (lrm) =>
     set((s) => {
       const next = new Set(s.hiddenLrms);
@@ -224,8 +274,15 @@ export const useStore = create((set, get) => ({
       return { hiddenLrms: next };
     }),
   setAllLrmsVisible: () => set({ hiddenLrms: new Set() }),
+  // The union across panels: hiddenLrms is shared, so "none" has to cover every
+  // mechanism visible in either panel or one side keeps drawing.
   hideAllLrms: () =>
-    set((s) => ({ hiddenLrms: new Set(s.lrmCatalogue.map((e) => e.lrm ?? `${e.ligand}|${e.receptor}`)) })),
+    set((s) => ({
+      hiddenLrms: new Set(
+        s.panels.flatMap((p) => p.lrmCatalogue)
+          .map((e) => e.lrm ?? `${e.ligand}|${e.receptor}`)
+      ),
+    })),
   setLayerProp: (id, prop, value) =>
     set((s) => ({
       layers: { ...s.layers, [id]: { ...s.layers[id], [prop]: value } },
@@ -243,18 +300,10 @@ export const useStore = create((set, get) => ({
   cellColorPalette: "viridis",
   setCellColorPalette: (p) => set({ cellColorPalette: p }),
 
-  // allGenes: full gene panel, fetched once on dataset change
-  allGenes: [],
-  genesLoaded: false,
-  setAllGenes: (genes) => set({ allGenes: genes }),
-  setGenesLoaded: (loaded) => set({ genesLoaded: loaded }),
-
   // transcriptFraction: fraction of viewport transcripts to request (0–1).
   // transcriptStats: live shown/total counts for the status display (panel 0).
   transcriptFraction: 0.1,
   setTranscriptFraction: (f) => set({ transcriptFraction: Math.max(0.0001, Math.min(1.0, f)) }),
-  transcriptStats: { shown: 0, total: 0 },
-  setTranscriptStats: (shown, total) => set({ transcriptStats: { shown, total } }),
 
   // categoryColorOverrides: user-chosen colors for categorical metadata columns.
   // keyed by `${field}::${category}` → [r, g, b, 255].  Reset on dataset change.
@@ -279,15 +328,7 @@ export const useStore = create((set, get) => ({
   })),
   resetTranscriptColorOverrides: () => set({ transcriptColorOverrides: {} }),
 
-  // ── Selected cell ─────────────────────────────────────────────────────────
-  selectedCell: null,
-  setSelectedCell: (cell) => set({ selectedCell: cell }),
-
   // ── Annotations ───────────────────────────────────────────────────────────
-  // pixelSize: µm per image pixel, fetched from /spatial/{dataset}/info
-  pixelSize: 1.0,
-  setPixelSize: (v) => set({ pixelSize: v }),
-
   // annotationMode: current interaction mode
   annotationMode: "pan", // "pan" | "region" | "measure"
   setAnnotationMode: (mode) => set({ annotationMode: mode }),

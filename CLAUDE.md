@@ -526,6 +526,46 @@ Results set `selectedCell` or `selectedEdge` in the store.
 - **`Viewer`** (default export) — thin wrapper; renders `<ViewerPanel panelIndex={0} />`
   always, plus `<ViewerPanel panelIndex={1} />` when `panelCount >= 2`.
 
+**Two panels can now show two different datasets.** Everything bound to *which
+dataset a panel shows* lives in `panels[panelIndex]` (store.js `makePanel()`):
+`dataset`, `activeImage`, `imageSize`, `platformCapabilities`, `pixelSize`,
+`edgeFile`, `lrmCatalogue`, `allGenes`, the colour ranges, and the shown/total
+stats. Each of those differs between datasets, so none of them can be global.
+
+Style and choice settings — layer opacity, palettes, colour-by, filters, LRM
+selection, edge geometry — deliberately stay **shared**: one sidebar drives both
+panels, which is what makes a side-by-side comparison comparable. The sidebar
+reconciles across panels with `hooks/usePanels.js`, whose rule is **union, then
+degrade per panel**: offer a control if *either* panel can use it, and let the
+panel that cannot render nothing. Intersecting instead would hide controls that
+work perfectly well on one side, which is worse when the point is comparing
+unlike things. `unit_label` becomes the neutral "unit" when the panels disagree.
+
+Consequences worth knowing:
+
+- **The dataset / image / edge-source pickers move into each panel's header** in
+  split mode, because an image name or edge file only means something relative to
+  one dataset. In single-panel mode they stay in the sidebar, unchanged.
+- **Changing either panel's dataset resets the shared column-, gene- and
+  mechanism-named settings** (filters, colour-by field, gene allowlist, hidden
+  LRMs). It has to: a filter naming a column the new dataset lacks 400s on every
+  viewport change. The cost is that switching one panel clears the other's
+  filter. That goes away when these become per-panel.
+- **Selection carries its panel index** (`selection = {panelIndex, kind, …}`), so
+  `CellInfoPanel` / `EdgeInfoPanel` and region export resolve against the dataset
+  that was actually clicked. `EdgeInfoPanel` used to be pinned to panel 0.
+- **⇔ Match zoom matches physical scale, not fraction of image.** It used to
+  divide both viewports by the local image width, i.e. match "the same proportion
+  of the picture" — identical behaviour when both panels showed one dataset, and
+  meaningless across two. 20% of a 6.5 mm Visium capture area and 20% of a 55 µm
+  seqFISH ROI differ by 55×. It now converts through each panel's own `pixelSize`
+  so the same number of microns spans the same screen width, exactly as a
+  scalebar would. Verified across Visium↔seqFISH: 2997 µm vs 55 µm → 55 µm both.
+- **`linkColorScale` (default on) shares one colour range across panels.** This
+  is figure integrity, not preference: two viridis panels that each auto-ranged
+  to their own data look comparable and are not — one's yellow might be 40 counts
+  and the other's 4,000. An explicit clamp from the sliders always wins.
+
 **What is per-panel (local state / per-instance):**
 - OSD viewer instance (`viewerRef`)
 - deck.gl ref (`deckRef`)

@@ -3,6 +3,8 @@
  */
 import React, { useEffect, useRef, useState } from "react";
 import { useStore } from "../store";
+import { useActiveDatasets, useActivePanels, useUnionCapabilities, useUnionList } from "../hooks/usePanels";
+import { DatasetPicker } from "./DatasetPicker";
 import { APP_VERSION } from "../App";
 import { legendGradient, QUAL_PALETTE } from "../utils/colormap";
 import { geneColor } from "../utils/geneColor";
@@ -58,96 +60,17 @@ const INPUT_STYLE = {
 
 const PALETTE_OPTIONS = ["viridis", "plasma", "magma", "inferno"];
 
-function DatasetPicker() {
-  const { apiBase, dataset, setDataset, activeImage, setActiveImage } = useStore();
-  const [datasets, setDatasets] = useState([]);
-  const [images, setImages] = useState([]);
-
-  // Fetch dataset list; auto-initialize to first entry if store has no valid dataset
-  useEffect(() => {
-    fetch(`${apiBase}/spatial/datasets`)
-      .then((r) => r.ok ? r.json() : [])
-      .then((list) => {
-        if (!Array.isArray(list)) return;
-        setDatasets(list);
-        if (list.length > 0) {
-          const cur = useStore.getState().dataset;
-          if (!cur || !list.includes(cur)) setDataset(list[0]);
-        }
-      })
-      .catch(() => {});
-  }, [apiBase]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Fetch available images for the current dataset
-  useEffect(() => {
-    if (!dataset) return;
-    fetch(`${apiBase}/spatial/${dataset}/images`)
-      .then((r) => r.ok ? r.json() : [])
-      .then((list) => {
-        if (!Array.isArray(list)) return;
-        setImages(list);
-      })
-      .catch(() => setImages([]));
-  }, [apiBase, dataset]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Keep activeImage valid for whatever images the current dataset offers.
-  // This is a separate, declarative effect rather than a branch inside the fetch
-  // above because the fetch only re-runs on dataset change: with activeImage
-  // captured in its closure, whether it got set depended on the order the two
-  // state updates landed in, which left datasets whose only image is the
-  // synthesised placeholder with activeImage stuck at null and no viewer at all.
-  useEffect(() => {
-    if (images.length > 0 && !images.includes(activeImage)) {
-      setActiveImage(images[0]);
-    }
-  }, [images, activeImage]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  if (datasets.length === 0) {
-    return (
-      <div style={{ marginBottom: 12, color: "#555", fontSize: 11, fontFamily: "monospace" }}>
-        Connecting…
-      </div>
-    );
-  }
-
-  return (
-    <div style={{ marginBottom: 12 }}>
-      <div style={{ ...SECTION_HEADER, marginTop: 0 }}>Dataset</div>
-      <select
-        value={dataset || ""}
-        onChange={(e) => setDataset(e.target.value)}
-        style={SELECT_STYLE}
-      >
-        {datasets.map((d) => (
-          <option key={d} value={d}>{d}</option>
-        ))}
-      </select>
-      {images.length > 1 && (
-        <>
-          <div style={{ ...SECTION_HEADER, marginTop: 8 }}>Image</div>
-          <select
-            value={activeImage || ""}
-            onChange={(e) => setActiveImage(e.target.value)}
-            style={SELECT_STYLE}
-          >
-            {images.map((img) => (
-              <option key={img} value={img}>{img}</option>
-            ))}
-          </select>
-        </>
-      )}
-    </div>
-  );
-}
-
 export default function LayerPanel() {
-  const { platformCapabilities, apiBase } = useStore();
-  const hasTranscripts = platformCapabilities?.has_transcripts ?? true;
-  const hasBoundaries  = platformCapabilities?.has_boundaries  ?? true;
+  const apiBase = useStore((s) => s.apiBase);
+  const panelCount = useStore((s) => s.panelCount);
+  // Union across visible panels: offer a layer when either panel can serve it.
+  const caps = useUnionCapabilities();
+  const hasTranscripts = caps.has_transcripts;
+  const hasBoundaries  = caps.has_boundaries;
   // A dataset with no morphology gets a placeholder canvas, so the opacity
   // control would be a dead toggle over a flat fill.
-  const hasMorphology  = platformCapabilities?.has_morphology  ?? true;
-  const unitLabel      = platformCapabilities?.unit_label ?? "cell";
+  const hasMorphology  = caps.has_morphology;
+  const unitLabel      = caps.unit_label;
   const unitTitle      = unitLabel.charAt(0).toUpperCase() + unitLabel.slice(1);
 
   // Show the build-time version immediately; check the backend version via /health
@@ -175,7 +98,13 @@ export default function LayerPanel() {
       display: "flex",
       flexDirection: "column",
     }}>
-      <DatasetPicker />
+      {/* In split mode each panel header carries its own picker, since the two
+          panels can show different datasets. */}
+      {panelCount < 2 ? <DatasetPicker panelIndex={0} /> : (
+        <div style={{ ...SECTION_HEADER, marginTop: 0 }}>
+          Comparing {panelCount} panels — pick each dataset in its header
+        </div>
+      )}
       <div style={{ fontWeight: "bold", marginBottom: 10, fontSize: 13, color: "#fff" }}>Layers</div>
 
       <div style={SECTION_HEADER}>Core</div>
@@ -185,6 +114,9 @@ export default function LayerPanel() {
 
       <div style={SECTION_HEADER}>{unitTitle} Color</div>
       <ColorBySection unitLabel={unitLabel} />
+
+      {/* Shared colour scale — only meaningful with two panels. */}
+      {panelCount >= 2 && <LinkColorScaleRow />}
 
       {/* Issue #45. Placed under the color section because picking the column to
           subset on is the same act as picking the column to colour by, and users
@@ -222,42 +154,67 @@ export default function LayerPanel() {
   );
 }
 
+
+/**
+ * `{column: dtype}` merged across the visible panels.
+ *
+ * Only used to decide whether a column is numeric, which is what gates the
+ * "treat as categorical" checkbox. Panel 0 wins a dtype disagreement — the
+ * checkbox only needs to know numeric-or-not, and the backend is the authority
+ * on the actual typing either way.
+ */
+function useSchemaDtypes() {
+  const apiBase = useStore((s) => s.apiBase);
+  const datasets = useActiveDatasets();
+  const key = datasets.join(" ");
+  const [map, setMap] = React.useState({});
+  React.useEffect(() => {
+    if (!datasets.length) { setMap({}); return; }
+    let cancelled = false;
+    Promise.all(datasets.map((d) =>
+      fetch(`${apiBase}/spatial/${d}/cells/schema`)
+        .then((r) => (r.ok ? r.json() : null)).catch(() => null)))
+      .then((rs) => {
+        if (cancelled) return;
+        const out = {};
+        for (const r of [...rs].reverse()) Object.assign(out, r?.columns ?? {});
+        setMap(out);
+      });
+    return () => { cancelled = true; };
+  }, [key, apiBase]);
+  return map;
+}
+
 // ── Color By section ──────────────────────────────────────────────────────────
 function ColorBySection({ unitLabel = "cell" }) {
   const {
-    platformCapabilities,
-    apiBase, dataset,
+    apiBase,
     cellColorEnabled, setCellColorEnabled,
     colorBy, setColorBy,
     cellColorPalette, setCellColorPalette,
-    allGenes, setAllGenes, setGenesLoaded,
     selectedGenes,
-    cellColorRange,
     cellColorClamp, setCellColorClamp,
     categoricalOverrides, setCategoricalOverride,
-    cellColorType, cellColorCategories,
   } = useStore();
 
-  const [cellSchema, setCellSchema] = useState(null);
-  const hasTranscripts = platformCapabilities?.has_transcripts ?? true;
-  const unitTitle = unitLabel.charAt(0).toUpperCase() + unitLabel.slice(1);
+  // Genes and metadata columns are unioned across the visible panels, so a
+  // column that exists only in panel 1 is still selectable. A panel that lacks
+  // the chosen column simply renders nothing for it.
+  const allGenes = useUnionList((d) =>
+    fetch(`${apiBase}/spatial/${d}/genes`).then((r) => (r.ok ? r.json() : [])));
+  const schemaColumns = useUnionList((d) =>
+    fetch(`${apiBase}/spatial/${d}/cells/schema`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((x) => (x?.columns ? Object.keys(x.columns) : [])));
+  const schemaDtypes = useSchemaDtypes();
+  // The legend describes panel 0; with a shared colour scale (see Viewer) both
+  // panels use the same range, so one legend is accurate for both.
+  const { cellColorRange, cellColorType, cellColorCategories } =
+    useStore((s) => s.panels[0]);
+  const caps = useUnionCapabilities();
 
-  // Fetch full gene list and cell schema once per dataset
-  useEffect(() => {
-    // `dataset` is null until DatasetPicker resolves the list; fetching then
-    // just 404s against /spatial/null/... and buries real errors in the console.
-    if (!dataset) return;
-    setGenesLoaded(false);
-    fetch(`${apiBase}/spatial/${dataset}/genes`)
-      .then((r) => r.ok ? r.json() : [])
-      .then((g) => { if (Array.isArray(g)) setAllGenes(g); })
-      .catch(() => {})
-      .finally(() => setGenesLoaded(true));
-    fetch(`${apiBase}/spatial/${dataset}/cells/schema`)
-      .then((r) => r.ok ? r.json() : null)
-      .then((s) => { if (s) setCellSchema(s); })
-      .catch(() => {});
-  }, [apiBase, dataset]); // eslint-disable-line react-hooks/exhaustive-deps
+  const hasTranscripts = caps.has_transcripts;
+  const unitTitle = unitLabel.charAt(0).toUpperCase() + unitLabel.slice(1);
 
   const { mode, field } = colorBy;
   const selectedCount = selectedGenes === null ? allGenes.length : selectedGenes.size;
@@ -267,7 +224,7 @@ function ColorBySection({ unitLabel = "cell" }) {
   // schema dtype: the backend also treats a low-cardinality integer column as
   // categorical, so guessing from dtype used to draw a gradient legend with two
   // dead sliders over a canvas that was already showing discrete colours.
-  const fieldDtype = field && cellSchema ? cellSchema.columns[field] : null;
+  const fieldDtype = field ? schemaDtypes[field] : null;
   const isCategorical = mode === "metadata" && !!field && cellColorType === "categorical";
 
   // The override is only meaningful for a numeric column — a text column has no
@@ -325,7 +282,7 @@ function ColorBySection({ unitLabel = "cell" }) {
                 style={{ ...SELECT_STYLE, marginTop: 4 }}
               >
                 <option value="">— select column —</option>
-                {cellSchema?.columns && Object.keys(cellSchema.columns).map((c) => (
+                {schemaColumns.map((c) => (
                   <option key={c} value={c}>{c}</option>
                 ))}
               </select>
@@ -589,6 +546,29 @@ function CategoricalLegend({ field, categories = [] }) {
   );
 }
 
+
+/**
+ * Merge /color-values responses from several datasets into one.
+ *
+ * A shared filter needs the union of what either panel can show: every category
+ * from both, and the widest numeric range. Datasets lacking the column
+ * contribute nothing rather than erroring, which is how a filter on a
+ * panel-1-only column still works while panel 0 simply draws everything.
+ */
+async function mergeColorValues(promises) {
+  const rs = (await Promise.all(promises)).filter(Boolean);
+  if (!rs.length) return null;
+  if (rs.some((r) => r.type === "categorical")) {
+    const seen = new Set(), cats = [];
+    for (const r of rs) for (const c of r.categories ?? [])
+      if (!seen.has(c)) { seen.add(c); cats.push(c); }
+    return { type: "categorical", categories: cats };
+  }
+  const mins = rs.map((r) => r.min).filter((v) => v != null);
+  const maxs = rs.map((r) => r.max).filter((v) => v != null);
+  return { type: "continuous", min: Math.min(...mins), max: Math.max(...maxs) };
+}
+
 // ── Metadata filter (issue #45) ───────────────────────────────────────────────
 /**
  * Restrict the view to a subset of units by one metadata column.
@@ -728,27 +708,27 @@ function fmtBound(v) {
 }
 
 function CellFilterSection({ unitLabel = "cell" }) {
-  const { apiBase, dataset, cellFilter, setCellFilter, categoricalOverrides } = useStore();
-  const [columns, setColumns] = useState([]);
-
-  useEffect(() => {
-    if (!dataset) return;
-    fetch(`${apiBase}/spatial/${dataset}/cells/schema`)
+  const { apiBase, cellFilter, setCellFilter, categoricalOverrides } = useStore();
+  const datasets = useActiveDatasets();
+  const columns = useUnionList((d) =>
+    fetch(`${apiBase}/spatial/${d}/cells/schema`)
       .then((r) => (r.ok ? r.json() : null))
-      .then((s) => setColumns(s?.columns ? Object.keys(s.columns) : []))
-      .catch(() => setColumns([]));
-  }, [apiBase, dataset]);
+      .then((x) => (x?.columns ? Object.keys(x.columns) : [])));
 
   // Honour the same categorical override the color panel uses, so a column the
   // user has declared categorical offers checkboxes here rather than a range.
+  // Values are pooled across the visible panels: the filter is shared, so its
+  // categories must cover every value either panel can show. A dataset without
+  // the column contributes nothing rather than erroring.
   const fetchValues = React.useCallback((field) => {
     const categorical = categoricalOverrides[`cell::${field}`] ?? null;
-    return fetch(`${apiBase}/spatial/${dataset}/color-values`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mode: "metadata", field, categorical }),
-    }).then((r) => (r.ok ? r.json() : null));
-  }, [apiBase, dataset, categoricalOverrides]);
+    return mergeColorValues(datasets.map((d) =>
+      fetch(`${apiBase}/spatial/${d}/color-values`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "metadata", field, categorical }),
+      }).then((r) => (r.ok ? r.json() : null)).catch(() => null)));
+  }, [apiBase, datasets.join(" "), categoricalOverrides]); // eslint-disable-line
 
   return (
     <MetadataFilterSection
@@ -759,33 +739,35 @@ function CellFilterSection({ unitLabel = "cell" }) {
 }
 
 function EdgeFilterSection() {
-  const { apiBase, dataset, edgeFile, edgeFilter, setEdgeFilter, categoricalOverrides } = useStore();
+  const { apiBase, edgeFilter, setEdgeFilter, categoricalOverrides } = useStore();
+  const active = useActivePanels();
   const [columns, setColumns] = useState([]);
-  const efParam = `?edge_file=${encodeURIComponent(edgeFile)}`;
+  const sources = active.filter((p) => p.dataset)
+    .map((p) => ({ dataset: p.dataset, ef: `?edge_file=${encodeURIComponent(p.edgeFile)}` }));
+  const srcKey = sources.map((x) => x.dataset + x.ef).join(" ");
 
   useEffect(() => {
-    if (!dataset) return;
-    fetch(`${apiBase}/edges/${dataset}/schema${efParam}`)
-      .then((r) => (r.ok ? r.json() : null))
-      // Structural and per-LRM columns are not edge attributes to subset on:
-      // one edge has many LRM rows, so "lrm = X" is a mechanism filter, which
-      // the LRM checklist below already does properly.
-      .then((s) => setColumns(
-        s?.columns
-          ? Object.keys(s.columns).filter((c) => !EDGE_FILTER_SKIP.has(c))
-          : []
-      ))
-      .catch(() => setColumns([]));
-  }, [apiBase, dataset, efParam]);
+    if (!sources.length) { setColumns([]); return; }
+    Promise.all(sources.map(({ dataset, ef }) =>
+      fetch(`${apiBase}/edges/${dataset}/schema${ef}`)
+        .then((r) => (r.ok ? r.json() : null)).catch(() => null)))
+      .then((rs) => {
+        const seen = new Set(), out = [];
+        for (const r of rs) for (const c of Object.keys(r?.columns ?? {}))
+          if (!EDGE_FILTER_SKIP.has(c) && !seen.has(c)) { seen.add(c); out.push(c); }
+        setColumns(out);
+      });
+  }, [apiBase, srcKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchValues = React.useCallback((field) => {
     const categorical = categoricalOverrides[`edge::${field}`] ?? null;
-    return fetch(`${apiBase}/edges/${dataset}/edge-color-values${efParam}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mode: "metadata", field, categorical }),
-    }).then((r) => (r.ok ? r.json() : null));
-  }, [apiBase, dataset, efParam, categoricalOverrides]);
+    return mergeColorValues(sources.map(({ dataset, ef }) =>
+      fetch(`${apiBase}/edges/${dataset}/edge-color-values${ef}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "metadata", field, categorical }),
+      }).then((r) => (r.ok ? r.json() : null)).catch(() => null)));
+  }, [apiBase, srcKey, categoricalOverrides]); // eslint-disable-line
 
   if (!columns.length) return null;
   return (
@@ -800,6 +782,39 @@ const EDGE_FILTER_SKIP = new Set([
   "edge", "sending_cell", "receiving_cell", "x1", "y1", "x2", "y2",
   "lrm", "lrm_id", "ligand", "receptor", "score", "score_norm",
 ]);
+
+
+
+/**
+ * Toggle for the cross-panel colour scale.
+ *
+ * Shown only in split mode. Default on, because independent auto-ranging makes
+ * two panels look comparable when they are not — see the store comment.
+ */
+function LinkColorScaleRow() {
+  const { linkColorScale, setLinkColorScale } = useStore();
+  return (
+    <label style={{ ...LABEL_STYLE, marginBottom: 8, fontSize: 10, color: "#888" }}
+           title="Both panels map through one colour range, so the legend is true for both">
+      <input type="checkbox" checked={linkColorScale}
+             onChange={(e) => setLinkColorScale(e.target.checked)}
+             style={{ accentColor: "#6cf" }} />
+      shared colour scale across panels
+      {!linkColorScale && (
+        <span style={{ color: "#a66", marginLeft: 4 }}>· colours not comparable</span>
+      )}
+    </label>
+  );
+}
+
+/** Sum a per-panel {shown,total} stat over the visible panels. */
+function useSummedStat(key) {
+  const panelCount = useStore((s) => s.panelCount);
+  const panels = useStore((s) => s.panels);
+  return React.useMemo(() => panels.slice(0, panelCount).reduce(
+    (a, p) => ({ shown: a.shown + (p[key]?.shown ?? 0), total: a.total + (p[key]?.total ?? 0) }),
+    { shown: 0, total: 0 }), [panels, panelCount, key]);
+}
 
 // ── Morphology row ────────────────────────────────────────────────────────────
 function MorphologyRow() {
@@ -861,7 +876,10 @@ function LayerRowBase({ label, color, visible, opacity, onToggle, onOpacity }) {
 }
 
 function TranscriptLayerRow() {
-  const { layers, setLayerProp, transcriptFraction, setTranscriptFraction, transcriptStats } = useStore();
+  const { layers, setLayerProp, transcriptFraction, setTranscriptFraction } = useStore();
+  // Summed across the visible panels: with two datasets, "how much is on
+  // screen" is the total of both, and one number is less noise than two.
+  const transcriptStats = useSummedStat("transcriptStats");
   const state = layers.transcripts ?? { visible: true, opacity: 0.8 };
   const { shown, total } = transcriptStats;
 
@@ -925,8 +943,8 @@ function CellSegmentsRow({ unitTitle = "Cell" }) {
   const {
     layers, setLayerProp,
     cellBoundaryFraction, setCellBoundaryFraction,
-    cellBoundaryStats,
   } = useStore();
+  const cellBoundaryStats = useSummedStat("cellBoundaryStats");
   const state = layers.cellSegments ?? { visible: true, opacity: 0.6, outlineOpacity: 0.8 };
   const { shown, total } = cellBoundaryStats;
   const pctShown = total > 0 ? (shown / total * 100) : null;
@@ -1016,10 +1034,17 @@ function CellSegmentsRow({ unitTitle = "Cell" }) {
 // ── Transcript species section ────────────────────────────────────────────────
 function TranscriptSpeciesSection() {
   const {
-    allGenes, genesLoaded, selectedGenes, setSelectedGenes, toggleSelectedGene,
+    selectedGenes, setSelectedGenes, toggleSelectedGene,
     transcriptColorOverrides, setTranscriptColorOverride,
     mergeTranscriptColorOverrides, resetTranscriptColorOverrides,
   } = useStore();
+  const apiBase = useStore((s) => s.apiBase);
+  const datasets = useActiveDatasets();
+  // Union across panels: a 960-gene CosMx panel beside a 130-gene MERSCOPE one
+  // offers both, and each panel renders only the genes it actually measures.
+  const allGenes = useUnionList((d) =>
+    fetch(`${apiBase}/spatial/${d}/genes`).then((r) => (r.ok ? r.json() : [])));
+  const genesLoaded = datasets.length === 0 || allGenes.length > 0;
   const [expanded, setExpanded] = useState(false);
   const [search, setSearch] = useState("");
   const fileInputRef = useRef(null);
@@ -1261,8 +1286,7 @@ const EDGE_SKIP_COLS = new Set(["x1", "y1", "x2", "y2", "edge", "sending_cell", 
 
 function EdgeSection() {
   const {
-    apiBase, dataset,
-    edgeFile, setEdgeFile,
+    apiBase,
     layers, setLayerProp,
     edgeMinStrength, setEdgeMinStrength,
     edgeColorBy, setEdgeColorBy,
@@ -1276,54 +1300,58 @@ function EdgeSection() {
     showArrowheads, setShowArrowheads,
     arrowStyle, setArrowStyle,
     arrowheadScale, setArrowheadScale,
-    lrmCatalogue, setLrmCatalogue,
     hiddenLrms, toggleLrm, setAllLrmsVisible, hideAllLrms,
-    edgeColorRange,
     edgeColorClamp, setEdgeColorClamp,
     categoricalOverrides, setCategoricalOverride,
   } = useStore();
+  const active = useActivePanels();
   const state = layers.edges ?? { visible: true, opacity: 0.9 };
   const [localStrength, setLocalStrength] = useState(edgeMinStrength ?? 0);
   const commitTimer = useRef(null);
-  const [edgeSchema, setEdgeSchema] = useState(null);
   const [lrmSearch, setLrmSearch] = useState("");
-  // List of edge-source files in the current dataset: [{id, label}].
-  const [edgeFiles, setEdgeFiles] = useState([]);
 
-  // ── edge-source parquet list (issue #46) ────────────────────────────────────
-  // Fetch the available edge files for the dataset and select the backend-provided
-  // default (legacy top-level edges.parquet if present, else the first). Falls back
-  // gracefully to a single implicit "edges.parquet" if the endpoint returns nothing.
-  useEffect(() => {
-    if (!dataset) return;
-    fetch(`${apiBase}/edges/${dataset}/files`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
-        const files = Array.isArray(data?.files) ? data.files : [];
-        setEdgeFiles(files);
-        if (files.length > 0) {
-          const cur = useStore.getState().edgeFile;
-          const ids = files.map((f) => f.id);
-          if (!ids.includes(cur)) setEdgeFile(data.default ?? ids[0]);
-        }
-      })
-      .catch(() => setEdgeFiles([]));
-  }, [apiBase, dataset]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The edge-file picker lives in each panel's header now, beside its dataset —
+  // edge sources are dataset-specific, so a single sidebar picker has no
+  // meaning once two panels can show two datasets.
+  const sources = active.filter((p) => p.dataset)
+    .map((p) => ({ dataset: p.dataset, ef: `?edge_file=${encodeURIComponent(p.edgeFile)}` }));
+  const srcKey = sources.map((x) => x.dataset + x.ef).join(" ");
 
-  const efParam = `?edge_file=${encodeURIComponent(edgeFile)}`;
-  useEffect(() => {
-    if (!dataset) return;
-    fetch(`${apiBase}/edges/${dataset}/schema${efParam}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then(setEdgeSchema)
-      .catch(() => {});
-    if (lrmCatalogue.length === 0) {
-      fetch(`${apiBase}/edges/${dataset}/lrm-catalogue${efParam}`)
-        .then((r) => (r.ok ? r.json() : []))
-        .then(setLrmCatalogue)
-        .catch(() => {});
+  // LRM catalogue: the union of what each panel loaded. hiddenLrms is shared and
+  // keyed on the "ligand|receptor" string, so a mechanism present in both
+  // datasets is one checkbox governing both — which is the point of the
+  // comparison. Mechanisms unique to one panel simply do nothing in the other.
+  const lrmCatalogue = React.useMemo(() => {
+    const seen = new Set(), out = [];
+    for (const p of active) for (const e of p.lrmCatalogue ?? []) {
+      const id = e.lrm ?? `${e.ligand}|${e.receptor}`;
+      if (!seen.has(id)) { seen.add(id); out.push(e); }
     }
-  }, [apiBase, dataset, efParam]); // eslint-disable-line react-hooks/exhaustive-deps
+    return out;
+  }, [active]);
+
+  // Edge metadata columns, unioned across panels.
+  const [edgeColumns, setEdgeColumns] = useState([]);
+  const [edgeDtypes, setEdgeDtypes] = useState({});
+  useEffect(() => {
+    if (!sources.length) { setEdgeColumns([]); setEdgeDtypes({}); return; }
+    let cancelled = false;
+    Promise.all(sources.map(({ dataset, ef }) =>
+      fetch(`${apiBase}/edges/${dataset}/schema${ef}`)
+        .then((r) => (r.ok ? r.json() : null)).catch(() => null)))
+      .then((rs) => {
+        if (cancelled) return;
+        const seen = new Set(), cols = [], dtypes = {};
+        for (const r of [...rs].reverse()) Object.assign(dtypes, r?.columns ?? {});
+        for (const r of rs) for (const c of Object.keys(r?.columns ?? {}))
+          if (!EDGE_SKIP_COLS.has(c) && !seen.has(c)) { seen.add(c); cols.push(c); }
+        setEdgeColumns(cols); setEdgeDtypes(dtypes);
+      });
+    return () => { cancelled = true; };
+  }, [apiBase, srcKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Legend range from panel 0; the colour scale is shared across panels.
+  const edgeColorRange = useStore((s) => s.panels[0].edgeColorRange);
 
   const handleStrength = (e) => {
     const v = parseFloat(e.target.value);
@@ -1332,10 +1360,7 @@ function EdgeSection() {
     commitTimer.current = setTimeout(() => setEdgeMinStrength(v), 300);
   };
 
-  // Metadata columns for color-by (exclude spatial/identity cols)
-  const metaCols = edgeSchema?.columns
-    ? Object.keys(edgeSchema.columns).filter((c) => !EDGE_SKIP_COLS.has(c))
-    : [];
+  const metaCols = edgeColumns;
 
   const { mode, field } = edgeColorBy;
   const selectedLrmCount = lrmCatalogue.length - hiddenLrms.size;
@@ -1344,7 +1369,7 @@ function EdgeSection() {
   // than reading the dtype matters for the same reason it does on the cell side:
   // the auto-rule also calls a low-cardinality integer column categorical, and an
   // explicit override can flip either way (issue #35).
-  const fieldDtype = field && edgeSchema ? edgeSchema.columns[field] : null;
+  const fieldDtype = field ? edgeDtypes[field] : null;
   const isNumericField = !!fieldDtype && /^(int|uint|float|double|Int|UInt|Float)/.test(fieldDtype);
   const edgeOverrideKey = `edge::${field}`;
   const edgeOverride = categoricalOverrides[edgeOverrideKey] ?? null;
@@ -1353,37 +1378,20 @@ function EdgeSection() {
   useEffect(() => {
     if (mode !== "metadata" || !field) { setEdgeMeta(null); return; }
     let cancelled = false;
-    fetch(`${apiBase}/edges/${dataset}/edge-color-values${efParam}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mode: "metadata", field, categorical: edgeOverride }),
-    })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => { if (!cancelled && d) setEdgeMeta({ type: d.type, categories: d.categories ?? [] }); })
-      .catch(() => {});
+    mergeColorValues(sources.map(({ dataset, ef }) =>
+      fetch(`${apiBase}/edges/${dataset}/edge-color-values${ef}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "metadata", field, categorical: edgeOverride }),
+      }).then((r) => (r.ok ? r.json() : null)).catch(() => null)))
+      .then((d) => { if (!cancelled && d) setEdgeMeta({ type: d.type, categories: d.categories ?? [] }); });
     return () => { cancelled = true; };
-  }, [apiBase, dataset, efParam, mode, field, edgeOverride]);
+  }, [apiBase, srcKey, mode, field, edgeOverride]); // eslint-disable-line
 
   const isCategorical = mode === "metadata" && !!field && edgeMeta?.type === "categorical";
 
   return (
     <div style={{ marginBottom: 8 }}>
-      {/* Edge-source picker (issue #46) — only shown when the dataset has more than
-          one edge file. Applies to every open viewer panel. */}
-      {edgeFiles.length > 1 && (
-        <div style={{ marginBottom: 8 }}>
-          <select
-            value={edgeFile}
-            onChange={(e) => setEdgeFile(e.target.value)}
-            style={SELECT_STYLE}
-            title="Which edge-source parquet to render"
-          >
-            {edgeFiles.map((f) => (
-              <option key={f.id} value={f.id}>{f.label}</option>
-            ))}
-          </select>
-        </div>
-      )}
       <LayerRowBase
         label="Edges"
         color="#f90"
@@ -1679,10 +1687,16 @@ function EdgeCategoricalLegend({ categories = [] }) {
 }
 
 function RegionsSection() {
-  const { apiBase, dataset, regions, removeRegion } = useStore();
+  const { apiBase, regions, removeRegion } = useStore();
+  // Regions are drawn in one panel's image space, so export resolves against
+  // that panel's dataset. Older regions carry no panelIndex; treat them as
+  // panel 0, which is where they could only have come from.
+  const panels = useStore((s) => s.panels);
   if (regions.length === 0) return null;
 
   const exportRegion = async (region) => {
+    const dataset = panels[region.panelIndex ?? 0]?.dataset;
+    if (!dataset) return;
     const res = await fetch(`${apiBase}/spatial/${dataset}/cells/export`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
