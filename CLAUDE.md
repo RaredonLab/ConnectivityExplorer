@@ -140,7 +140,7 @@ backend/
   Dockerfile
   tests/
     golden_snapshot.py       Reader regression guard — see Development Workflow
-    golden_baseline.json     Recorded baseline (217 probes / 8 datasets)
+    golden_baseline.json     Recorded baseline (238 probes / 8 datasets)
 
 frontend/
   src/
@@ -182,12 +182,19 @@ sample_data/                 Partially gitignored — default data mount for loc
   make_seqfish.py            Synthetic seqFISH v2 ROI generator (committable fixture)
   make_visium.py             Synthetic classic Visium generator (committable fixture);
                              non-identity tissue_hires_scalef on purpose — see below
+  make_edge_metadata.py      Demo edge-metadata/ for any dataset with edges. Three
+                             columns derived from the edge file, one clearly-named
+                             invented flag, plus a README in each folder saying which
+                             is which. Nothing here is analysis output.
 r/                           NICHESv2 → edges.parquet. See r/README.md.
   niches_xenium.R            Xenium — coordinates already µm; read this one first
   niches_seqfish.R           seqFISH — dense CSV counts, per-version coordinate units
   niches_visium_hd.R         Visium HD — pixel coordinates, must convert to µm
   niches_visium.R            Visium classic — same, but µm/px must be derived from the
                              55 µm spot spec; checks it against the 100 µm pitch
+  niches_merscope.R          MERSCOPE — already µm; EntityID must be read as character
+  niches_cosmx.R             CosMx — (fov, cell_ID) identity; shift to the reader's
+                             origin, then px → µm
   niches_common.R            shared helpers (10x h5 reader, LR-coverage check, validation)
   *_PPLR.R                   older personal pipeline with hardcoded paths; reference only
 docs/
@@ -697,10 +704,25 @@ Real datasets run ~0.02–0.2 and ~0.25. A passing render here is necessary, not
 see `sample_data/visium_hd_tiny/PROVENANCE.md`. `sample_data/visium_tiny` was built with a
 non-identity factor precisely to close that gap.
 
-Bin selection defaults to `square_008um` (Space Ranger's own analysis default, and
-`spatialdata-io`'s `DEFAULT_BIN`), falling back to the coarsest bin present. `info()`
-reports `bin` and `available_bins`; exposing bin choice in the UI would be the natural
-follow-up, in the shape of the edge-file picker.
+**Bin selection follows the edge file when there is one.** Barcodes are bin-size
+specific — `s_008um_00172_00043-1` and `s_016um_00066_00065-1` name different things —
+so serving a different bin than `edges.parquet` was built on leaves the two with *zero*
+ids in common. The edges still draw, because they carry their own coordinates, but
+nothing joins: clicking a bin finds no edge, the metadata filter drops every edge, and
+the tissue graph floats free of the bins beneath it. The bundled fixture shipped that way
+for two releases — `niches_visium_hd.R` defaulted to 16 µm while the reader defaulted to
+8 µm.
+
+`_bin_from_edges()` now reads one barcode from the edge file and prefers the matching
+bin. Without edges it falls back to `square_008um` (Space Ranger's own analysis default,
+and `spatialdata-io`'s `DEFAULT_BIN`), then to the coarsest bin present. `info()` reports
+`bin` and `available_bins`; a bin picker in the UI, in the shape of the edge-file picker,
+would still be the natural follow-up for datasets with no edges.
+
+There is a real reason the two disagreed: **8 µm bins are usually too sparse to score.**
+Regenerating the fixture at 8 µm gave 233,531 edges of which 83 were scored; at 16 µm it
+is 66,001 edges across 69 LRMs. Whoever runs NICHESv2 makes that call, and the viewer now
+follows it.
 
 Unexploited: `segmented_outputs/cell_segmentations.geojson`, which Space Ranger 4.x emits
 and which would turn this from a bin viewer into a single-cell one. The seqFISH reader
@@ -1168,7 +1190,7 @@ auth, no user accounts, and no per-dataset permissions.
 
 **Regression guard.** `backend/tests/golden_snapshot.py` exercises every reader method
 against all local datasets, digests the results, and diffs them against a recorded
-baseline (217 probes across 8 datasets). Run it after any reader change:
+baseline (238 probes across 8 datasets). Run it after any reader change:
 
 ```bash
 cd backend && python3 tests/golden_snapshot.py          # check

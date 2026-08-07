@@ -244,6 +244,9 @@ function ColorBySection({ unitLabel = "cell" }) {
 
   // Fetch full gene list and cell schema once per dataset
   useEffect(() => {
+    // `dataset` is null until DatasetPicker resolves the list; fetching then
+    // just 404s against /spatial/null/... and buries real errors in the console.
+    if (!dataset) return;
     setGenesLoaded(false);
     fetch(`${apiBase}/spatial/${dataset}/genes`)
       .then((r) => r.ok ? r.json() : [])
@@ -729,6 +732,7 @@ function CellFilterSection({ unitLabel = "cell" }) {
   const [columns, setColumns] = useState([]);
 
   useEffect(() => {
+    if (!dataset) return;
     fetch(`${apiBase}/spatial/${dataset}/cells/schema`)
       .then((r) => (r.ok ? r.json() : null))
       .then((s) => setColumns(s?.columns ? Object.keys(s.columns) : []))
@@ -760,6 +764,7 @@ function EdgeFilterSection() {
   const efParam = `?edge_file=${encodeURIComponent(edgeFile)}`;
 
   useEffect(() => {
+    if (!dataset) return;
     fetch(`${apiBase}/edges/${dataset}/schema${efParam}`)
       .then((r) => (r.ok ? r.json() : null))
       // Structural and per-LRM columns are not edge attributes to subset on:
@@ -1307,6 +1312,7 @@ function EdgeSection() {
 
   const efParam = `?edge_file=${encodeURIComponent(edgeFile)}`;
   useEffect(() => {
+    if (!dataset) return;
     fetch(`${apiBase}/edges/${dataset}/schema${efParam}`)
       .then((r) => (r.ok ? r.json() : null))
       .then(setEdgeSchema)

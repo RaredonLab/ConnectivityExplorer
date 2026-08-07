@@ -46,6 +46,8 @@ Spatial transcriptomics platforms (Xenium, seqFISH, Visium, Visium HD, MERSCOPE,
 | **MERSCOPE** | Vizgen | ✓ | ✓ | ✓ | ✓ |
 | **CosMx** | Nanostring | placeholder | ✓ | ✓ | ✓ |
 
+All nine bundled demo datasets ship `edges.parquet` and an `edge-metadata/` folder, so the connectivity layer and the annotation workflow have something to show on every platform. Two caveats worth knowing: the MERSCOPE panel carries only **2** complete ligand-receptor pairs and the seqFISH reference panel **none**, because targeted panels are chosen for cell typing rather than signalling — `check_lr_coverage()` reports this before NICHESv2 runs, and `seqfish_instrument2` therefore uses synthetic edges from `make_edges.py`. The `edge-metadata/` folders are generated demo annotations, not analysis output; each carries a README saying which columns are derived and which is invented.
+
 seqFISH means the commercial **Spatial Genomics GenePS** output, not the academic seqFISH/seqFISH+ method, which has no standard file layout; the current v2 layout is fully supported, and legacy v1 reads cells and transcripts but not boundaries.
 
 The two array-based platforms have no per-molecule transcript coordinates — only spot- or bin-level UMI counts — so they synthesise a polygon per unit instead: a square for a Visium HD bin, a circle for a 55 µm Visium spot. Fill, colour-by, picking and region selection then all work through the same layers. CosMx datasets often ship no morphology image, in which case TissuePlex renders the data onto a blank canvas sized to the tissue. Each reader declares what it supports via a capability flag, and the UI hides layers the platform cannot serve — and relabels itself, so a Visium dataset says "spot" wherever a Xenium one says "cell".
