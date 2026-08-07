@@ -19,10 +19,19 @@
 ##   NICHESv2 ever sees the coordinates. `rad` is then in microns too, and
 ##   comparable to the value you would use on Xenium.
 ##
-## Bins are not cells. A 16 um bin may contain several cells or none, so treat
+## The bin you pick must match the bin TissuePlex displays
+## --------------------------------------------------------
+## Barcodes are bin-size specific — `s_008um_00172_00043-1` and
+## `s_016um_00066_00065-1` name different things. visium_hd_reader.py serves
+## `square_008um` by default (Space Ranger's own analysis default, and
+## spatialdata-io's DEFAULT_BIN), so edges generated at another bin size render
+## from their own coordinates but join to nothing: clicking a bin finds no edge,
+## the cell filter drops every edge, and the tissue graph is disconnected from
+## the bins under it. The default here matches the reader for that reason.
+##
+## Bins are not cells. An 8 um bin may contain a cell, several, or none, so treat
 ## "communication" between bins as a neighbourhood statistic rather than a
-## cell-cell claim. Prefer the coarser bins: 2 um bins are mostly empty and there
-## are millions of them.
+## cell-cell claim. Avoid 2 um bins: mostly empty, and there are millions.
 ##
 ## Inputs
 ##   binned_outputs/<bin>/filtered_feature_bc_matrix.h5
@@ -50,12 +59,12 @@ positional <- args[!grepl("^--", args) &
                    !(seq_along(args) %in% (which(grepl("^--", args)) + 1L))]
 
 DATASET <- if (length(positional)) positional[1] else "sample_data/visium_hd_tiny"
-BIN     <- opt("--bin", "square_016um")   # coarser = fewer, denser bins
+BIN     <- opt("--bin", "square_008um")   # MUST match the bin TissuePlex shows
 OUT     <- opt("--out", file.path(DATASET, "edges.parquet"))
 SPECIES <- opt("--species", "mouse")      # the 10x tiny demo is mouse brain
-# rad in MICRONS. For 16 um bins, 40 um reaches the 8 immediate neighbours plus a
-# little; scale it with the bin size if you switch bins.
-RAD     <- as.numeric(opt("--rad", "40"))
+# rad in MICRONS. For 8 um bins, 24 um reaches the immediate neighbours plus a
+# little; scale it with the bin size if you switch bins (40 um suited 16 um bins).
+RAD     <- as.numeric(opt("--rad", "24"))
 CORES   <- as.integer(opt("--cores", "4"))
 MINCOUNT <- as.integer(opt("--min-counts", "1"))  # drop empty bins
 

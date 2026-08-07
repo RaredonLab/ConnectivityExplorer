@@ -73,12 +73,46 @@ def _score_for_pair(dist: float, rng: random.Random, np_rng) -> float:
     return float(np.clip(base + rng.gauss(0, 0.35), 0.01, 4.0))
 
 
+def _load_cells(dataset_dir: Path) -> pd.DataFrame:
+    """Cell ids and centroids in **microns**, for any supported platform.
+
+    Xenium's `cells.parquet` is read directly when present, since that keeps this
+    script usable with no backend on the path. Otherwise it falls back to the
+    TissuePlex reader, which is what makes the generator work on seqFISH, CosMx,
+    MERSCOPE and the two Visium platforms.
+
+    The units conversion is the part to get right. Readers return centroids in
+    **image pixel space**, while `edges.parquet` stores **microns** — the backend
+    divides by `pixel_size` to place edges. So the reader path multiplies back up
+    by `pixel_size`, and the round trip lands the edge exactly on its cell.
+    """
+    xen = dataset_dir / "cells.parquet"
+    if xen.exists():
+        return pd.read_parquet(xen)[["cell_id", "x_centroid", "y_centroid"]]
+
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend"))
+    from app.readers.reader_factory import ReaderFactory
+
+    reader = ReaderFactory.detect(dataset_dir)
+    ps = reader.pixel_size
+    rows = reader.cells()
+    if not rows:
+        raise SystemExit(f"{dataset_dir.name}: reader returned no cells")
+    df = pd.DataFrame(rows)[["cell_id", "x_centroid", "y_centroid"]].dropna()
+    df["x_centroid"] = df["x_centroid"].astype(float) * ps   # image px → µm
+    df["y_centroid"] = df["y_centroid"].astype(float) * ps
+    print(f"  read {len(df)} cells via the {reader.platform} reader "
+          f"(pixel_size {ps:.5f} µm/px)")
+    return df.reset_index(drop=True)
+
+
 def make_edges(dataset_dir: Path, k_neighbors: int = 6, lrms_per_pair: int = 3,
                autocrine_fraction: float = 0.15, seed: int = 42) -> pd.DataFrame:
     rng = random.Random(seed)
     np_rng = np.random.default_rng(seed)
 
-    cells = pd.read_parquet(dataset_dir / "cells.parquet")[["cell_id", "x_centroid", "y_centroid"]]
+    cells = _load_cells(dataset_dir)
     coords = cells[["x_centroid", "y_centroid"]].values  # (N, 2) µm
     N = len(cells)
     barcodes = cells["cell_id"].tolist()

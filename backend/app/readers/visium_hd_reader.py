@@ -41,6 +41,7 @@ Not yet used: ``segmented_outputs/cell_segmentations.geojson``. Space Ranger 4.x
 emits real per-cell polygons, which would turn this from a bin viewer into a
 single-cell one. The seqFISH reader already has GeoJSON ring-parsing to lift.
 """
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -74,21 +75,71 @@ class VisiumHDReader(SpaceRangerReader):
         return sorted(d.name for d in self._bin_root().glob("square_*um") if d.is_dir())
 
     def _bin_dir(self) -> Optional[Path]:
-        """The bin directory this reader serves."""
+        """The bin directory this reader serves.
+
+        An edge file, when present, decides. Barcodes are bin-size specific —
+        ``s_008um_00172_00043-1`` and ``s_016um_00066_00065-1`` name different
+        things — so serving a different bin than ``edges.parquet`` was built on
+        leaves the two with zero ids in common. The edges still draw, because
+        they carry their own coordinates, but nothing joins: clicking a bin finds
+        no edge, the metadata filter drops every edge, and the tissue graph floats
+        free of the bins beneath it. That is exactly what the bundled fixture did
+        for two releases.
+
+        Preferring the edge file's bin is also the right default on the merits.
+        Which bin to analyse is a real choice — 8 µm bins are often too sparse for
+        ligand-receptor scoring, 16 µm ones dense enough — and whoever ran
+        NICHESv2 already made it. Without edges, fall back to Space Ranger's own
+        analysis default.
+        """
         if self._bin_dir_cache is not _UNSET:
             return self._bin_dir_cache  # type: ignore[return-value]
         root = self._bin_root()
         available = self.available_bins()
         chosen = None
-        for name in _PREFERRED_BINS:
-            if name in available:
-                chosen = root / name
-                break
+
+        from_edges = self._bin_from_edges()
+        if from_edges and from_edges in available:
+            chosen = root / from_edges
+        if chosen is None:
+            for name in _PREFERRED_BINS:
+                if name in available:
+                    chosen = root / name
+                    break
         if chosen is None and available:
             # Unknown bin size — take the coarsest, i.e. the largest µm number.
             chosen = root / sorted(available)[-1]
         self._bin_dir_cache = chosen
         return chosen
+
+    def _bin_from_edges(self) -> Optional[str]:
+        """Bin directory name implied by the barcodes in an edge file, or None.
+
+        Reads a single row. Visium HD barcodes are ``s_<NNN>um_<row>_<col>-1``,
+        so one is enough to name the bin.
+        """
+        candidates = []
+        top = self.path / "edges.parquet"
+        if top.exists():
+            candidates.append(top)
+        edges_dir = self.path / "edges"
+        if edges_dir.is_dir():
+            candidates.extend(sorted(edges_dir.glob("*.parquet")))
+
+        for candidate in candidates:
+            try:
+                import pyarrow.parquet as pq
+                if "sending_cell" not in set(pq.read_schema(candidate).names):
+                    continue
+                batch = next(pq.ParquetFile(candidate)
+                             .iter_batches(batch_size=1, columns=["sending_cell"]))
+                bc = str(batch.column(0)[0])
+            except Exception:
+                continue
+            m = re.match(r"s_(\d+)um_", bc)
+            if m:
+                return f"square_{m.group(1)}um"
+        return None
 
     # ── Space Ranger hooks ────────────────────────────────────────────────────
 
