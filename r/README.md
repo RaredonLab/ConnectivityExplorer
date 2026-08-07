@@ -9,16 +9,17 @@ but the first two steps differ enough per platform to be worth reading separatel
 | `niches_xenium.R` | Xenium | The simple case. Coordinates are already µm; nothing to convert. **Read this first.** |
 | `niches_seqfish.R` | seqFISH (Spatial Genomics GenePS) | Counts are a dense cells × genes CSV needing transposition; coordinate units vary by GenePS version, so they are detected and reported. |
 | `niches_visium_hd.R` | Visium HD | Coordinates are **pixels** and must be multiplied by `microns_per_pixel` before NICHESv2 sees them. |
+| `niches_visium.R` | Visium (classic) | Same pixel problem, but there is no `microns_per_pixel` to multiply by — it is derived from the 55 µm spot spec, then sanity-checked against the known 100 µm lattice pitch. |
 | `niches_common.R` | — | Shared helpers only: the 10x HDF5 reader, barcode alignment, LR-coverage check, output validation. Not runnable. |
 
 The older `*_PPLR.R` scripts are a personal analysis pipeline with hardcoded paths, kept
-for reference. The four above are the ones to copy.
+for reference. The five above are the ones to copy.
 
 ## Setup
 
 ```r
 install.packages(c("arrow", "Matrix", "jsonlite", "remotes"))
-BiocManager::install("rhdf5")                                   # Xenium / Visium HD
+BiocManager::install("rhdf5")                                   # Xenium / Visium
 remotes::install_github("RaredonLab/NICHESv2", ref = "dev")     # note: dev, not main
 ```
 
@@ -31,6 +32,7 @@ NICHESv2's `Suggests`, so both of those lines matter.
 Rscript r/niches_xenium.R    sample_data/xenium_human_breast_2fov --species human --rad 30
 Rscript r/niches_seqfish.R   sample_data/seqfish_synthetic        --species mouse  --rad 12
 Rscript r/niches_visium_hd.R sample_data/visium_hd_tiny --bin square_016um --rad 40
+Rscript r/niches_visium.R    sample_data/visium_tiny    --species mouse  --rad 150
 ```
 
 Each writes `edges.parquet` into the dataset folder, where TissuePlex picks it up with no

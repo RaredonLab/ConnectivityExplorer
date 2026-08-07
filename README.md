@@ -8,7 +8,7 @@ An interactive spatial transcriptomics viewer for exploring cell-cell communicat
 
 ## What it does
 
-Spatial transcriptomics platforms (Xenium, seqFISH, Visium HD, MERSCOPE, CosMx) produce high-resolution images with hundreds of genes measured per cell. NICHESv2 infers which cells are communicating and through which ligand-receptor mechanisms (LRMs). TissuePlex bridges those two outputs: it overlays the NICHESv2 communication graph on the tissue image and lets you explore it interactively.
+Spatial transcriptomics platforms (Xenium, seqFISH, Visium, Visium HD, MERSCOPE, CosMx) produce high-resolution images with hundreds of genes measured per cell. NICHESv2 infers which cells are communicating and through which ligand-receptor mechanisms (LRMs). TissuePlex bridges those two outputs: it overlays the NICHESv2 communication graph on the tissue image and lets you explore it interactively.
 
 **Key capabilities:**
 
@@ -39,12 +39,13 @@ Spatial transcriptomics platforms (Xenium, seqFISH, Visium HD, MERSCOPE, CosMx) 
 | **Xenium** | 10x Genomics | ✓ | ✓ | ✓ | ✓ |
 | **seqFISH** | Spatial Genomics | ✓ | ✓ | ✓ | ✓ |
 | **Visium HD** | 10x Genomics | ✓ | — | ✓ (bins) | ✓ |
-| **MERSCOPE** | Vizgen | — | ✓ | — | ✓ |
-| **CosMx** | Nanostring | — | ✓ | — | ✓ |
+| **Visium** | 10x Genomics | ✓ | — | ✓ (spots) | ✓ |
+| **MERSCOPE** | Vizgen | ✓ | ✓ | ✓ | ✓ |
+| **CosMx** | Nanostring | placeholder | ✓ | ✓ | ✓ |
 
-Xenium and seqFISH are the complete implementations. seqFISH means the commercial **Spatial Genomics GenePS** output, not the academic seqFISH/seqFISH+ method, which has no standard file layout; the current v2 layout is fully supported, and legacy v1 reads cells and transcripts but not boundaries.
+seqFISH means the commercial **Spatial Genomics GenePS** output, not the academic seqFISH/seqFISH+ method, which has no standard file layout; the current v2 layout is fully supported, and legacy v1 reads cells and transcripts but not boundaries.
 
-The other readers cover cells, transcripts, and metadata coloring; boundary parsing is platform-specific and not yet implemented for them (MERSCOPE stores polygons in HDF5, CosMx in per-FOV label TIFFs). Visium HD renders each square bin as a polygon — so fill, colour-by, picking and region selection all work — but has no per-molecule transcript coordinates. Each reader declares what it supports via a capability flag, and the UI hides layers the platform cannot serve.
+The two array-based platforms have no per-molecule transcript coordinates — only spot- or bin-level UMI counts — so they synthesise a polygon per unit instead: a square for a Visium HD bin, a circle for a 55 µm Visium spot. Fill, colour-by, picking and region selection then all work through the same layers. CosMx datasets often ship no morphology image, in which case TissuePlex renders the data onto a blank canvas sized to the tissue. Each reader declares what it supports via a capability flag, and the UI hides layers the platform cannot serve — and relabels itself, so a Visium dataset says "spot" wherever a Xenium one says "cell".
 
 The edge connectivity layer (NICHESv2 output) works with any platform — it is platform-agnostic as long as cell barcodes match.
 
@@ -101,13 +102,21 @@ DATA_PATH=/absolute/path/to/your/datasets docker compose up --build
         spatial/{tissue_positions.parquet, scalefactors_json.json, tissue_hires_image.png}
     edges.parquet
 
-  merscope_run_D/
+  visium_run_D/
+    filtered_feature_bc_matrix.h5
+    spatial/                ← Visium sentinel: scalefactors_json.json +
+      scalefactors_json.json     tissue_positions.csv
+      tissue_positions.csv
+      tissue_hires_image.png
+    edges.parquet
+
+  merscope_run_E/
     cell_by_gene.csv        ← MERSCOPE sentinel
     cell_metadata.csv
     detected_transcripts.csv
     edges.parquet
 
-  cosmx_run_E/
+  cosmx_run_F/
     my_experiment_tx_file.csv   ← CosMx sentinel
     edges.parquet
 ```
