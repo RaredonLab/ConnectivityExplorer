@@ -695,10 +695,15 @@ function ViewerPanel({ panelIndex }) {
     return result;
   }, [edges]);
 
+  // Both layers apply the LRM filter identically. Autocrine used to skip the
+  // visible_lrm_count test, so hiding every mechanism removed the directed edges
+  // and left a ring on every cell — which reads as the autocrine layer ignoring
+  // the controls entirely.
+  const hasVisibleLrms = (r) => (r.visible_lrm_count ?? r.lrm_count ?? 0) > 0;
   const { directedEdges, autocrineCells } = useMemo(() => ({
-    directedEdges: edges.filter((r) => !r.is_autocrine && (r.visible_lrm_count ?? r.lrm_count ?? 0) > 0),
+    directedEdges: edges.filter((r) => !r.is_autocrine && hasVisibleLrms(r)),
     autocrineCells: edges
-      .filter((r) => r.is_autocrine)
+      .filter((r) => r.is_autocrine && hasVisibleLrms(r))
       .map((r) => ({ ...r, x: r.x1, y: r.y1 })),
   }), [edges]);
 

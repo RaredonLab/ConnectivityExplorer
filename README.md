@@ -4,6 +4,8 @@ An interactive spatial transcriptomics viewer for exploring cell-cell communicat
 
 ![TissuePlex demo](docs/demo.gif)
 
+📖 **[User manual](https://raredonlab.github.io/TissuePlex/)** — step-by-step setup and a reference for every control in the interface. No programming experience assumed.
+
 ---
 
 ## What it does
@@ -15,7 +17,7 @@ Spatial transcriptomics platforms (Xenium, seqFISH, Visium, Visium HD, MERSCOPE,
 - **Toggle individual LRMs in real time** — select any subset of 100s of ligand-receptor mechanisms and instantly see which cell pairs are communicating through them
 - **Color edges by communication score or metadata** — visualize LRM set strength, cell type, or any custom column from your analysis as a continuous or categorical color scale
 - **Click any edge for full detail** — inspect every active LRM for a given cell pair with their individual scores
-- **Directed edges with arrowheads** — A→B and B→A are visually distinct; autocrine communication renders as rings
+- **Directed edges with arrowheads** — A→B and B→A are visually distinct; autocrine communication renders as a ring per cell, on the same color scale and mechanism filter as the edges
 - **Multiple edge sets per dataset** — drop several `.parquet` files into an `edges/` folder and flip between scoring approaches on the same tissue without duplicating the image or cell data
 - **Pan and zoom on high-resolution morphology images** — OME-TIFF tile pyramid with smooth zoom from whole-tissue to single-cell scale
 - **Multi-channel morphology** — Xenium `morphology_focus/` channels are selectable alongside the top-level morphology image
@@ -24,6 +26,7 @@ Spatial transcriptomics platforms (Xenium, seqFISH, Visium, Visium HD, MERSCOPE,
 - **Per-panel rotation** — rotate either panel to any angle to align tissue orientation
 - **Transcript dot overlay** — per-gene colored dots, filterable by gene species, with hover tooltips
 - **Cell/spot segmentation** — polygon boundaries with color-by-gene-set or color-by-metadata, and editable per-category colors
+- **Autocrine signalling** — self-signalling drawn as a ring per cell, colored by the same scale as the directed edges and obeying the same mechanism filter
 - **Metadata filtering** — restrict the view to a subset of cells or edges (a sample, a few cell types, a value range). Applied server-side before sampling, so a rare cluster renders at full density instead of being sampled away
 - **Treat-as-categorical toggle** — integer-coded cluster IDs get a discrete editable palette rather than a viridis gradient, with the numeric order preserved in the legend
 - **Region drawing and measurement tools** — annotate areas, export cell selections, save PNG screenshots

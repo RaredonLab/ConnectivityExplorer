@@ -17,8 +17,14 @@ What it deliberately gets *awkward*, because that is what a reader gets wrong:
     why a missing multiply went unnoticed there for a whole release. This fixture
     uses 0.08 — the realistic order of magnitude — so the same bug fails loudly.
   * **No ``microns_per_pixel`` key.** Classic Visium scalefactors carry only the
-    four keys 10x actually writes, forcing ``pixel_size`` down the derived path
-    (``55 µm / spot_diameter_fullres``) rather than the recorded one.
+    four keys 10x actually writes, forcing ``pixel_size`` down a derived path.
+  * **``spot_diameter_fullres`` is the DETECTED footprint, not the 55 µm capture
+    spot.** Measured at 0.6482 × the lattice pitch on both V1_Mouse_Kidney and
+    V1_Adult_Mouse_Brain, i.e. ~64.8 µm. The first version of this generator set
+    it to exactly ``55 / microns_per_pixel``, which made the fixture a tautology:
+    it confirmed whatever derivation the reader used. It now emits the real
+    ratio, so deriving from 55 µm instead of the pitch produces a pixel size 18%
+    too small and the lattice check in ``r/niches_visium.R`` fails.
   * **A hexagonal lattice with the odd-row offset**, not a square grid, and with
     off-tissue spots present and flagged ``in_tissue = 0`` so the filter is
     exercised.
@@ -41,9 +47,12 @@ from pathlib import Path
 
 import numpy as np
 
-# Slide geometry, fixed by 10x: 55 µm spots on a 100 µm centre-to-centre pitch.
+# Slide geometry, fixed by 10x: 55 µm capture spots on a 100 µm centre-to-centre
+# pitch. DETECTED_SPOT_UM is what Space Ranger's `spot_diameter_fullres` actually
+# measures — the printed footprint, ~18% wider — as observed on two real datasets.
 SPOT_DIAMETER_UM = 55.0
 SPOT_PITCH_UM = 100.0
+DETECTED_SPOT_UM = 64.8
 
 # Deliberately far from 1.0 — see the module docstring.
 HIRES_SCALEF = 0.08
@@ -180,7 +189,8 @@ def main() -> int:
     positions = build_positions(args.rows, args.cols, rng)
     in_tissue = [p for p in positions if p["in_tissue"] == 1]
 
-    spot_diameter_fullres = SPOT_DIAMETER_UM / MICRONS_PER_FULLRES_PX
+    # Deliberately the detected footprint, not 55 µm — see the module docstring.
+    spot_diameter_fullres = DETECTED_SPOT_UM / MICRONS_PER_FULLRES_PX
 
     # Image is the fullres frame scaled by HIRES_SCALEF.
     max_x = max(p["pxl_col_in_fullres"] for p in positions)
@@ -243,8 +253,14 @@ def main() -> int:
     print(f"wrote {out}/")
     print(f"  {len(positions)} spots ({len(in_tissue)} in tissue), {len(genes)} genes")
     print(f"  hires image {hires_w}x{hires_h} px  (tissue_hires_scalef={HIRES_SCALEF})")
+    pitch_px = SPOT_PITCH_UM / MICRONS_PER_FULLRES_PX
+    print(f"  lattice pitch={pitch_px:.1f} px -> correct um/px={SPOT_PITCH_UM / pitch_px:.4f}")
     print(f"  spot_diameter_fullres={spot_diameter_fullres:.2f} px "
-          f"-> derived pixel_size={MICRONS_PER_FULLRES_PX / HIRES_SCALEF:.4f} um/hires-px")
+          f"(detected {DETECTED_SPOT_UM} um, NOT the {SPOT_DIAMETER_UM} um capture spot)")
+    print(f"    deriving from {SPOT_DIAMETER_UM} um would give "
+          f"{SPOT_DIAMETER_UM / spot_diameter_fullres:.4f} um/px — 18% wrong, and that is "
+          f"the regression this fixture exists to catch")
+    print(f"  derived pixel_size={MICRONS_PER_FULLRES_PX / HIRES_SCALEF:.4f} um/hires-px")
     return 0
 
 

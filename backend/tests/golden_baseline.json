@@ -1222,7 +1222,7 @@
   },
   "visium_tiny": {
     "bounds_full": {
-      "digest": "394f7bcf07a3f07e",
+      "digest": "fb08e147389983f1",
       "keys": [
         "cell_id",
         "vertex_x",
@@ -1233,7 +1233,7 @@
       "total": 252
     },
     "bounds_half": {
-      "digest": "bfe707b219830296",
+      "digest": "98da9b9c06491a61",
       "n": 2016,
       "n_cells": 126,
       "total": 252
@@ -1387,13 +1387,17 @@
       "n": 36
     },
     "info_keys": [
+      "detected_spot_um",
+      "lattice_pitch_fullres",
       "n_spots",
       "pixel_size",
       "pixel_size_derived",
+      "pixel_size_source",
       "platform",
+      "spot_capture_diameter_um",
       "spot_diameter_fullres",
       "spot_diameter_px",
-      "spot_diameter_um",
+      "spot_pitch_um",
       "tissue_hires_scalef",
       "tissue_lowres_scalef"
     ],

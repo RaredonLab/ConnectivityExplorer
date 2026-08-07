@@ -76,9 +76,10 @@ and boundary layers rather than returning empty arrays for them.
   UMI counts only, no molecule coordinates); `unit_label: "bin"`. See its own section.
 - Visium classic (v1/v2): fully implemented — spots, spot outlines as circles,
   expression, and both color-value modes. `has_transcripts: False`;
-  `unit_label: "spot"`. Shares `spaceranger.py` with Visium HD. **Verified only
-  against the synthetic fixture so far** — no real Space Ranger `outs/` tree has
-  been through it. See its own section.
+  `unit_label: "spot"`. Shares `spaceranger.py` with Visium HD. Verified against real
+  Space Ranger output (`V1_Mouse_Kidney`, `V1_Adult_Mouse_Brain`), including a
+  registration check: 98.1% of `in_tissue` spots land on stained tissue and 99.5% of
+  out-of-tissue spots land on bare slide. See its own section.
 - MERSCOPE: cells, transcripts, genes, color-values (metadata + gene-set) implemented;
   `cell_boundaries()` returns empty and `has_boundaries: False` (HDF5 polygon format
   not yet parsed)
@@ -193,8 +194,12 @@ docs/
   data_format.md             edges.parquet column spec for NICHESv2 R export
   setup.md                   Docker deployment guide (lab-facing)
   cloud-deploy.md            DigitalOcean deployment runbook (~$106–116/mo)
-  public_datasets.md         Links to public Xenium datasets used for development
-  index.html, demo.gif       Landing page + README demo animation
+  public_datasets.md         Public datasets used for development, and the classic
+                             Visium pair the reader was verified against
+  index.html                 The user manual, published to GitHub Pages at
+                             https://raredonlab.github.io/TissuePlex/ — hand-written
+                             HTML, no build step. Update it when a UI control changes.
+  demo.gif                   README demo animation
 OBS/                         Archived, superseded planning docs. Provenance only —
                              NOT a specification. See OBS/README.md.
 NICHESv2_package_design.md   Design doc for the separate NICHESv2 R package (not this repo)
@@ -724,14 +729,44 @@ dataset_dir/                      ← point at the *contents* of Space Ranger's 
 
 Three things differ from Visium HD, and all three are traps:
 
-- **There is no `microns_per_pixel`.** Classic Visium scalefactors carry only those four
-  keys; 10x deliberately does not record image pixel size, noting that "prior knowledge
-  of the image pixel sizes is not used". `pixel_size` is therefore *derived* from the one
-  constant the slide guarantees — `55 / spot_diameter_fullres`. 10x cautions that spot
-  diameters are estimates and recommends a calibrated microscope value, so the derivation
-  is surfaced as `pixel_size_derived: true` in `info()` rather than passed off as
-  measured. Everything downstream inherits that uncertainty: the measurement tool, and
-  the placement of `edges.parquet` micron coordinates.
+- **There is no `microns_per_pixel`**, and the obvious replacement is wrong by 18%.
+  Classic Visium scalefactors carry only those four keys; 10x deliberately does not record
+  image pixel size, noting that "prior knowledge of the image pixel sizes is not used".
+  So `pixel_size` has to be derived — from the **100 µm lattice pitch**, measured off the
+  positions table, *not* from `spot_diameter_fullres`.
+
+  Measured independently on `V1_Mouse_Kidney` and `V1_Adult_Mouse_Brain`:
+
+  | | kidney | brain |
+  |---|---|---|
+  | in-row pitch (fullres px) | 138.00 | 138.00 |
+  | `spot_diameter_fullres` | 89.46 | 89.44 |
+  | ratio | 0.6482 | 0.6481 |
+
+  `spot_diameter_fullres` is Space Ranger's **detected spot footprint** — ~64.8 µm at that
+  ratio, not the 55 µm nominal capture diameter. 10x's own docs say as much, describing
+  classic Visium spot diameters as "approximately 60–70 µm" and warning they are
+  estimates. Deriving from 55 µm yields 0.615 µm/px where the truth is 0.725, and
+  reconstructs a 5.4 × 5.7 mm capture area against the specified 6.5 × 6.5 mm; the pitch
+  derivation reconstructs 6.35 × 6.67 mm. The pitch is also better conditioned — it
+  averages thousands of positions in a rigid array template, where the diameter is one
+  estimate of a fuzzy edge.
+
+  **This was shipped wrong and caught only by real data.** The first version of
+  `make_visium.py` set `spot_diameter_fullres = 55 / microns_per_pixel`, which made the
+  fixture a tautology: it confirmed whatever derivation the reader used. It now emits the
+  real 0.648 ratio, so the bad derivation produces an 85 µm nearest-neighbour spacing
+  against the 100 µm truth — the same failure the real datasets show.
+
+  `info()` reports `pixel_size_source`: `"lattice_pitch"` normally, `"spot_diameter"` when
+  the positions table is too sparse to measure a pitch (< 20 in-row samples) and the
+  reader falls back on the 64.8 µm constant. Everything downstream inherits whichever was
+  used — the measurement tool, and the placement of `edges.parquet` micron coordinates.
+
+- **Spots are drawn at `spot_diameter_fullres`, i.e. the ~65 µm detected footprint**, not
+  the 55 µm capture area. That matches Loupe, scanpy and squidpy, so TissuePlex does not
+  render Visium differently from every other viewer; `info()` reports both
+  `spot_capture_diameter_um` and `detected_spot_um` so the distinction is visible.
 - **`tissue_positions_list.csv` (Space Ranger < 2.0) has no header row.** Read with
   pandas' default header inference it eats the first spot and mislabels every column.
   `spaceranger.py::_read_positions_table` names the columns explicitly for that filename.
@@ -952,6 +987,17 @@ synchronously from `visible_score_sum` in the already-fetched edges array. No se
 call is made for `lrm_set` mode. The p95 of `visible_score_sum` across the current
 viewport is auto-set as `edgeColorClamp.high` so the color range adapts to the data
 rather than being dominated by outlier edges.
+
+**Autocrine edges are colored on the same scale as directed edges.** They were once
+excluded from the `lrm_set` computation, which left the rings stuck on their default
+orange whatever the color control said — the one edge type that ignored "color by LRM
+set" — and they also skipped the `visible_lrm_count > 0` test, so hiding every
+mechanism removed the lines but left a ring on every cell. Both are fixed: the layer
+now derives from the same map and applies the same LRM filter. Sharing the scale is
+safe because autocrine `score_sum` medians run 1.00–1.33× the directed medians across
+the bundled datasets, so they neither dominate the range nor need one of their own.
+Metadata mode never had the problem, because `edge_color_values` groups over the whole
+parquet and so already covered autocrine rows.
 
 Categorical data uses `QUAL_PALETTE` (20 visually distinct colors) from `colormap.js`.
 Beyond 20 categories, `geneColor()` provides deterministic hash-based colors.

@@ -205,7 +205,7 @@
     <a href="#step2">2 · Install Docker Desktop</a>
     <a href="#step3">3 · Download TissuePlex</a>
     <a href="#step4">4 · First launch</a>
-    <a href="#step5">5 · Load your Xenium data</a>
+    <a href="#step5">5 · Load your data</a>
   </div>
 
   <div class="toc-group">
@@ -221,6 +221,7 @@
     <a href="#interface">Interface overview</a>
     <a href="#morphology">Morphology image</a>
     <a href="#cell-segments">Cell Segments</a>
+    <a href="#filtering">Filtering by metadata</a>
     <a href="#transcripts">Transcripts</a>
     <a href="#tissue-graph">Tissue Graph</a>
     <a href="#directed-edges">Directed Edges</a>
@@ -252,8 +253,12 @@
   machine.</p>
   <p>No programming experience is required. This guide covers installation, data
   setup, and every control in the interface.</p>
+  <p>Six platforms are supported — Xenium, Visium, Visium HD, MERSCOPE, CosMx and
+  seqFISH — and TissuePlex works out which one it is looking at from the files in
+  the folder. The examples below use Xenium; everything transfers, and the
+  platform-specific differences are called out where they matter.</p>
   <p><strong>By the end of this guide you will have:</strong> TissuePlex installed
-  and running, a Xenium dataset loaded, cell-cell communication edges from NICHESv2
+  and running, your dataset loaded, cell-cell communication edges from NICHESv2
   visible, and custom analysis results available as cell color overlays.</p>
 </div>
 
@@ -267,10 +272,12 @@
       <p>TissuePlex runs in the browser. No special graphics card is needed.</p>
     </div>
     <div class="card">
-      <h4>Your Xenium output folder</h4>
-      <p>The folder produced by the Xenium instrument, containing
-      <code>experiment.xenium</code>, <code>morphology.ome.tif</code>,
-      <code>transcripts.parquet</code>, and related files.</p>
+      <h4>Your platform's output folder</h4>
+      <p>Whatever your instrument or pipeline produced, unmodified. For Xenium that
+      is the folder containing <code>experiment.xenium</code>,
+      <code>morphology.ome.tif</code> and <code>transcripts.parquet</code>; for the
+      Visium platforms it is the contents of Space Ranger's <code>outs/</code>. See
+      the platform table in step 5.</p>
     </div>
     <div class="card">
       <h4>An internet connection</h4>
@@ -451,7 +458,7 @@ docker compose up</code></pre>
 <div class="step" id="step5">
   <div class="step-num">5</div>
   <div class="step-body">
-    <h3>Load Your Xenium Dataset</h3>
+    <h3>Load Your Dataset</h3>
     <p>TissuePlex reads from a <strong>parent folder</strong> containing one or
     more dataset subfolders. The expected layout:</p>
 
@@ -481,13 +488,30 @@ docker compose up</code></pre>
     <p>TissuePlex detects the platform from the files present in each subfolder:</p>
 
     <table>
-      <tr><th>Platform</th><th>Required file in the dataset folder</th></tr>
-      <tr><td>Xenium (10x Genomics)</td><td><code>experiment.xenium</code></td></tr>
-      <tr><td>MERSCOPE (Vizgen)</td><td><code>cell_by_gene.csv</code> or <code>cell_metadata.csv</code></td></tr>
-      <tr><td>CosMx (Nanostring)</td><td>a file ending in <code>_tx_file.csv</code></td></tr>
+      <tr><th>Platform</th><th>Required file in the dataset folder</th><th>Unit</th></tr>
+      <tr><td>Xenium (10x Genomics)</td><td><code>experiment.xenium</code></td><td>cell</td></tr>
+      <tr><td>Visium HD (10x Genomics)</td><td><code>binned_outputs/square_*um/</code></td><td>bin</td></tr>
+      <tr><td>Visium (10x Genomics)</td><td><code>spatial/scalefactors_json.json</code> plus a <code>tissue_positions</code> file</td><td>spot</td></tr>
+      <tr><td>MERSCOPE (Vizgen)</td><td><code>cell_by_gene.csv</code> or <code>cell_metadata.csv</code></td><td>cell</td></tr>
+      <tr><td>CosMx (Nanostring)</td><td>a file ending in <code>_tx_file.csv</code></td><td>cell</td></tr>
+      <tr><td>seqFISH (Spatial Genomics)</td><td>a file matching <code>*_CellCoordinates*.csv</code></td><td>cell</td></tr>
     </table>
 
     <p>Folders without a matching sentinel file are silently skipped.</p>
+
+    <div class="note">
+      <strong class="label">Point at the right folder.</strong> For the 10x array
+      platforms, the dataset folder is the <em>contents</em> of Space Ranger's
+      <code>outs/</code> directory — the folder that directly contains
+      <code>spatial/</code> — not its parent.
+    </div>
+
+    <p>The interface adapts to whichever platform is loaded. Panels are relabelled
+    to match the unit — a Visium dataset says <em>Spot Segments</em>, <em>Spot
+    Filter</em> and <em>Spot Info</em> where a Xenium one says <em>Cell</em>, and
+    Visium HD says <em>Bin</em>. Layers a platform cannot serve are hidden
+    entirely: the two Visium platforms measure counts per spot or bin rather than
+    per molecule, so the Transcripts layer does not appear for them.</p>
   </div>
 </div>
 
@@ -816,8 +840,83 @@ write.csv(
     use a gradient palette with clamp controls.</li>
     <li><strong>Categorical columns</strong> (cluster labels, cell type names,
     etc.) are assigned distinct colors automatically, one per category, with a
-    legend.</li>
+    legend of editable color swatches.</li>
   </ul>
+
+  <h4>Treat as Categorical</h4>
+  <p>When you pick a numeric column, a <span class="ui">treat as categorical</span>
+  checkbox appears beneath the dropdown. This is the control you want for
+  integer-coded categories.</p>
+  <p>Cluster IDs are the usual case: <code>fwrite</code> on a Seurat
+  <code>@meta.data</code> writes <code>seurat_clusters</code> as plain integers,
+  so nothing in the file distinguishes "cluster 7" from a measurement. TissuePlex
+  guesses — an integer column with 30 or fewer distinct values is treated as
+  categorical — and the checkbox overrides that guess in either direction:</p>
+  <ul>
+    <li><strong>Checked</strong> — one distinct, editable color per value, with the
+    legend in <em>numeric</em> order, so cluster 10 comes after cluster 2 rather
+    than between 1 and 2.</li>
+    <li><strong>Unchecked</strong> — a continuous gradient with clamp sliders. Useful
+    for a coded column with few levels that you would rather read as a scale.</li>
+    <li>An <span class="ui">auto</span> button returns the column to automatic
+    detection.</li>
+  </ul>
+  <p>The choice is remembered per column for the session. It applies to edge
+  metadata too, in the <span class="ui">Edge Data</span> section.</p>
+</section>
+
+
+<!-- ── Filtering ──────────────────────────────────────────────────────── -->
+<section id="filtering">
+  <h2 class="section-title">Filtering by Metadata</h2>
+  <p>The <span class="ui">Cell Filter</span> section restricts the whole view to a
+  subset of your data — one sample, a few cell types, a range of values. Everything
+  outside the subset is simply not drawn.</p>
+
+  <h3>How to use it</h3>
+  <ul>
+    <li>Pick a column from the dropdown. Any cell metadata column works, including
+    supplemental ones.</li>
+    <li><strong>Categorical columns</strong> give you a checkbox per value. Tick the
+    ones you want; <span class="ui">all</span> and <span class="ui">none</span>
+    buttons are provided. With nothing ticked, everything is shown — an empty
+    selection means "no restriction", not "hide everything".</li>
+    <li><strong>Continuous columns</strong> give you <span class="ui">min</span> and
+    <span class="ui">max</span> boxes, both optional and both inclusive. The
+    placeholder text shows the column's actual range.</li>
+    <li><span class="ui">clear filter</span> removes the restriction.</li>
+  </ul>
+
+  <h3>What the filter affects</h3>
+  <ul>
+    <li><strong>Cell segments</strong> — only matching cells are drawn, and only
+    they can be clicked or captured by a region selection.</li>
+    <li><strong>Edges and the tissue graph</strong> — an edge is drawn only when
+    <em>both</em> of its endpoints match. The point of narrowing to two or three
+    cell types is the signalling within that subset, and an edge with one endpoint
+    outside would run off to a cell that is not on screen.</li>
+    <li><strong>Transcripts are not filtered.</strong> Several platforms ship no
+    transcript-to-cell assignment at all, so there is nothing to match on.</li>
+  </ul>
+
+  <div class="note">
+    <strong class="label">Why the subset stays dense.</strong> The filter is applied
+    on the server, before sampling. If it were applied afterwards you would see a
+    sample of a subset — narrowing to a cluster holding 5% of cells while the
+    sampler is at 10% would draw about 0.5% of the tissue. Filtering first means the
+    subset renders at full density, and the <em>shown/total</em> counter beside
+    <span class="ui">Cell Segments</span> updates to describe the subset.
+  </div>
+
+  <h3>Filtering edges</h3>
+  <p>The <span class="ui">Edge Filter</span> inside <span class="ui">Edge
+  Data</span> works the same way but on columns of the edge table itself, including
+  annotations from an <code>edge-metadata/</code> folder — a curation call, a
+  confidence score, a review flag. It composes with the cell filter: set both and
+  you see only the annotated edges among your chosen cells.</p>
+  <p>This is distinct from the <span class="ui">LRM Mechanisms</span> checklist
+  below it. The checklist chooses which <em>mechanisms</em> are scored on every
+  edge; the edge filter chooses which <em>cell pairs</em> are drawn at all.</p>
 </section>
 
 
@@ -923,13 +1022,37 @@ write.csv(
   </ul>
 
   <h4>Autocrine</h4>
-  <p>The <span class="ui">Autocrine</span> checkbox toggles visibility of
-  autocrine signals (cases where a cell signals to itself), rendered as rings.
-  When on, two sliders appear:</p>
+  <p>The <span class="ui">Autocrine</span> checkbox draws autocrine signalling —
+  a cell signalling to itself — as a ring around that cell. NICHESv2 emits one
+  autocrine edge per cell, so on real output expect a ring on every cell that has
+  any self-signal.</p>
+  <p>Autocrine rings behave exactly like directed edges in every other respect:</p>
   <ul>
-    <li><span class="ui">ring r</span>: ring radius.</li>
+    <li>They are <strong>colored by the same control and the same scale</strong>.
+    Set <span class="ui">edge color</span> to <em>LRM Set</em> and the rings are
+    shaded by signal strength alongside the lines; set it to a
+    <em>metadata column</em> and they take that column's colors. One legend
+    describes everything on screen.</li>
+    <li>They <strong>obey the LRM Mechanisms checklist</strong>. Narrow to one
+    mechanism and only the cells with autocrine signal through that mechanism keep
+    their ring.</li>
+    <li>They obey the cell and edge metadata filters, and the density slider.</li>
+    <li>Clicking a ring opens the same edge detail panel, listing the mechanisms
+    scored for that self-edge.</li>
+  </ul>
+  <p>Two sliders appear when the checkbox is on:</p>
+  <ul>
+    <li><span class="ui">ring r</span>: ring radius, in image pixels. Increase it
+    on large tissues where the default is small relative to the field of view.</li>
     <li><span class="ui">ring w</span>: ring line width.</li>
   </ul>
+  <div class="callout warn">
+    <strong class="label">Seeing nothing?</strong> The
+    <span class="ui">Edges</span> layer must be on for rings to appear —
+    <span class="ui">Autocrine</span> lives inside it. Also check the
+    <span class="ui">density</span> slider: at the default 10% only a tenth of
+    edges, rings included, are drawn.
+  </div>
 
   <h4>Width and Offset</h4>
   <ul>

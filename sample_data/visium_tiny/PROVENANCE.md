@@ -29,12 +29,29 @@ reader docstring claimed otherwise. The check that catches it:
 | with the multiply | 252 / 252 |
 | without it | 0 / 252 |
 
-It also forces the *derived* pixel-size path, because a real classic Visium
-`scalefactors_json.json` carries no `microns_per_pixel` — only the four keys 10x
-actually writes. The generator uses 0.25 µm per fullres pixel and a 220 px spot
-diameter; `55 / 220 = 0.25` recovers it exactly, and the NICHESv2 script's
-independent check on the lattice reports a median nearest-neighbour distance of
-100.0 µm, which is the Visium pitch.
+### `spot_diameter_fullres` is the detected footprint, not the capture spot
+
+The second thing this fixture exists for, and it was learned the hard way.
+
+A real `scalefactors_json.json` carries no `microns_per_pixel`, so `pixel_size` must
+be derived. The first version of this generator set
+`spot_diameter_fullres = 55 µm / microns_per_pixel`, which made the fixture a
+**tautology**: whatever derivation the reader used, the fixture agreed with it. The
+reader derived from the 55 µm capture spot and the fixture happily confirmed it.
+
+Real data says otherwise. On `V1_Mouse_Kidney` and `V1_Adult_Mouse_Brain` the in-row
+lattice pitch is exactly 138.00 fullres px while `spot_diameter_fullres` is 89.45 — a
+ratio of 0.648, so that field measures a ~64.8 µm *detected* footprint, not the 55 µm
+capture spot. Deriving from 55 µm is 18% wrong.
+
+The generator now emits the real ratio (259.2 px for a 0.25 µm/px scan), so:
+
+| derivation | pixel_size | measured nearest-neighbour |
+|---|---|---|
+| 100 µm lattice pitch (correct) | 3.125 | **100.0 µm** |
+| 55 µm capture spot (the bug) | 2.652 | 84.9 µm |
+
+which is the same failure signature the real datasets show (99.3 vs 84.2 µm).
 
 ## What it is not
 
@@ -43,6 +60,7 @@ not.** Counts are Poisson noise with three arbitrary x-axis domains over a 36-ge
 panel chosen to form complete connectomedb2025 ligand-receptor pairs, so NICHESv2
 has something to score. Nothing here should be read as a result.
 
-No real Space Ranger `outs/` tree has been through this reader yet. A passing render
-here is necessary, not sufficient — the same caveat `visium_hd_tiny/PROVENANCE.md`
-makes, for the same reason.
+The reader has since been verified against real Space Ranger output — see the classic
+Visium section of `docs/public_datasets.md`. That verification is what corrected the
+pixel-size derivation above, which is the standing argument for not trusting a
+synthetic fixture on its own: it can only test what you already believed.

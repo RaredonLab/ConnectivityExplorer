@@ -16,14 +16,20 @@
 ## The one thing classic Visium does differently, and it matters
 ## --------------------------------------------------------------
 ## There is no `microns_per_pixel` in scalefactors_json.json. 10x does not record
-## the image pixel size for classic Visium. So the conversion has to come from the
-## one physical constant the slide guarantees:
+## the image pixel size for classic Visium, so the conversion must be derived —
+## and the obvious-looking derivation is wrong by 18%.
 ##
-##     a Visium spot is 55 um across
-##     => microns_per_pixel = 55 / spot_diameter_fullres
+##   DON'T:  55 / spot_diameter_fullres
+##   DO:     100 / <in-row lattice pitch, measured from tissue_positions>
 ##
-## 10x notes that spot diameters are estimates and recommends a calibrated
-## microscope value where you have one. Pass --mpp to override.
+## `spot_diameter_fullres` is Space Ranger's DETECTED spot footprint, not the
+## 55 um capture spot. Measured on V1_Mouse_Kidney and V1_Adult_Mouse_Brain it is
+## 0.6482 x the lattice pitch, i.e. ~64.8 um — which is why 10x's own docs
+## describe classic Visium spot diameters as "approximately 60-70 um" and warn
+## that they are estimates. The 100 um centre-to-centre pitch is a hard geometric
+## constant and averages over thousands of positions, so that is what we use.
+##
+## Pass --mpp to override with a calibrated microscope value.
 ##
 ## Spots are not cells. A 55 um spot holds roughly 1-10 cells, so an edge between
 ## two spots is a neighbourhood statistic, not a cell-cell claim. Say so in
@@ -49,8 +55,9 @@ source(file.path(if (is.na(.this)) "r" else dirname(.this), "niches_common.R"))
 
 # The slide spec: "Each spot is 55 um in diameter with a 100 um center to center
 # distance between spots."
-SPOT_DIAMETER_UM <- 55
-SPOT_PITCH_UM    <- 100
+SPOT_DIAMETER_UM <- 55    # capture spot
+SPOT_PITCH_UM    <- 100   # centre-to-centre; the constant we actually derive from
+DETECTED_SPOT_UM <- 64.8  # what spot_diameter_fullres measures — see above
 
 # ── Parameters ────────────────────────────────────────────────────────────────
 args <- commandArgs(trailingOnly = TRUE)
@@ -104,8 +111,9 @@ if (file.exists(pos.modern)) {
   stop("no tissue_positions.csv or tissue_positions_list.csv in ",
        file.path(DATASET, "spatial"))
 }
+pos.all <- pos                       # pitch is measured over the whole array
 pos <- pos[pos$in_tissue == 1, , drop = FALSE]
-cat(sprintf("  %d in-tissue spots\n", nrow(pos)))
+cat(sprintf("  %d in-tissue spots (of %d on the slide)\n", nrow(pos), nrow(pos.all)))
 
 # ── 3. The conversion: fullres pixels -> microns ─────────────────────────────
 sf.path <- file.path(DATASET, "spatial", "scalefactors_json.json")
@@ -114,15 +122,35 @@ if (is.finite(MPP_ARG) && MPP_ARG > 0) {
   mpp <- MPP_ARG
   cat(sprintf("  microns_per_pixel: %.6f  (supplied via --mpp)\n", mpp))
 } else {
-  spot.px <- as.numeric(sf$spot_diameter_fullres)
-  if (!is.finite(spot.px) || spot.px <= 0)
-    stop("spot_diameter_fullres missing or invalid in ", sf.path,
-         " — pass --mpp <um per fullres pixel> instead")
-  mpp <- SPOT_DIAMETER_UM / spot.px
-  cat(sprintf("  microns_per_pixel: %.6f  (DERIVED from %.1f um / %.1f px)\n",
-              mpp, SPOT_DIAMETER_UM, spot.px))
-  cat("    note: 10x calls spot diameters estimates; pass --mpp if you have a\n")
-  cat("    calibrated microscope value.\n")
+  # Measure the in-row lattice pitch: within a row, array_col steps by 2 and the
+  # spacing between those spots IS the hex nearest-neighbour distance. Median over
+  # every row, so missing spots cannot move it.
+  steps <- unlist(lapply(split(pos.all, pos.all$array_row), function(g) {
+    g  <- g[order(g$array_col), ]
+    dx <- diff(g$pxl_col_in_fullres); dc <- diff(g$array_col)
+    dx[dc == 2]
+  }), use.names = FALSE)
+  steps <- steps[is.finite(steps) & steps > 0]
+  if (length(steps) >= 20) {
+    pitch.px <- stats::median(steps)
+    mpp <- SPOT_PITCH_UM / pitch.px
+    cat(sprintf("  microns_per_pixel: %.6f  (from %.0f um pitch / %.2f px)\n",
+                mpp, SPOT_PITCH_UM, pitch.px))
+    spot.px <- as.numeric(sf$spot_diameter_fullres)
+    if (is.finite(spot.px))
+      cat(sprintf("    (spot_diameter_fullres %.1f px = %.1f um detected, not the %.0f um\n"
+                  , spot.px, spot.px * mpp, SPOT_DIAMETER_UM),
+          "     capture spot — do not derive from it)\n", sep = "")
+  } else {
+    spot.px <- as.numeric(sf$spot_diameter_fullres)
+    if (!is.finite(spot.px) || spot.px <= 0)
+      stop("cannot measure the lattice pitch and spot_diameter_fullres is invalid in ",
+           sf.path, " — pass --mpp <um per fullres pixel> instead")
+    mpp <- DETECTED_SPOT_UM / spot.px
+    cat(sprintf("  microns_per_pixel: %.6f  (FALLBACK: %.1f um detected / %.1f px)\n",
+                mpp, DETECTED_SPOT_UM, spot.px))
+    cat("    warning: too few positions to measure the lattice pitch.\n")
+  }
 }
 
 meta.data <- data.frame(
