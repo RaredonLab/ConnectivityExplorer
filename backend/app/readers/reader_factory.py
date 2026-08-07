@@ -8,6 +8,7 @@ could theoretically co-exist in one folder (unlikely in practice).
 Supported platforms (detection order):
   Xenium (10x Genomics)    — experiment.xenium
   Visium HD (10x Genomics) — square_???um/ subdirectory
+  Visium (10x Genomics)    — spatial/scalefactors_json.json + tissue_positions*
   MERSCOPE (Vizgen)        — cell_by_gene.csv or cell_metadata.csv
   CosMx (Nanostring)       — *_tx_file.csv
   seqFISH (Spatial Genomics) — *_CellCoordinates*.csv  (glob; registered last)
@@ -44,6 +45,15 @@ def _is_visium_hd(path: Path) -> bool:
     # alone silently failed to detect any genuine Visium HD dataset.
     return (any(path.glob("binned_outputs/square_*um"))
             or any(path.glob("square_???um")))
+
+
+def _is_visium(path: Path) -> bool:
+    # Classic Visium. Registered *after* Visium HD: HD also has a top-level
+    # spatial/ folder, and although that one holds images only (no scalefactors),
+    # ordering the more specific sentinel first means a future HD layout change
+    # cannot silently reroute HD datasets to this reader.
+    from app.readers.visium_reader import VisiumReader
+    return VisiumReader.looks_like_visium(path)
 
 
 def _is_merscope(path: Path) -> bool:
@@ -88,6 +98,11 @@ def _make_visium_hd(path: Path) -> SpatialDatasetReader:
     return VisiumHDReader(path)
 
 
+def _make_visium(path: Path) -> SpatialDatasetReader:
+    from app.readers.visium_reader import VisiumReader
+    return VisiumReader(path)
+
+
 def _make_merscope(path: Path) -> SpatialDatasetReader:
     from app.readers.merscope_reader import MerscopeReader
     return MerscopeReader(path)
@@ -105,6 +120,7 @@ def _make_seqfish(path: Path) -> SpatialDatasetReader:
 
 _register(_is_xenium,    _make_xenium,    "experiment.xenium (Xenium / 10x)")
 _register(_is_visium_hd, _make_visium_hd, "square_???um/ directory (Visium HD / 10x)")
+_register(_is_visium,    _make_visium,    "spatial/scalefactors_json.json + tissue_positions (Visium / 10x)")
 _register(_is_merscope,  _make_merscope,  "cell_by_gene.csv or cell_metadata.csv (MERSCOPE / Vizgen)")
 _register(_is_cosmx,     _make_cosmx,     "*_tx_file.csv (CosMx / Nanostring)")
 _register(_is_seqfish,   _make_seqfish,   "*_CellCoordinates*.csv (seqFISH / Spatial Genomics)")
@@ -133,4 +149,4 @@ class ReaderFactory:
     @staticmethod
     def supported_platforms() -> list[str]:
         """Names of all registered platforms, in detection-priority order."""
-        return ["xenium", "visium_hd", "merscope", "cosmx", "seqfish"]
+        return ["xenium", "visium_hd", "visium", "merscope", "cosmx", "seqfish"]

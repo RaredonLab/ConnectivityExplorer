@@ -225,6 +225,7 @@ export default function LayerPanel() {
 // ── Color By section ──────────────────────────────────────────────────────────
 function ColorBySection({ unitLabel = "cell" }) {
   const {
+    platformCapabilities,
     apiBase, dataset,
     cellColorEnabled, setCellColorEnabled,
     colorBy, setColorBy,
@@ -238,6 +239,8 @@ function ColorBySection({ unitLabel = "cell" }) {
   } = useStore();
 
   const [cellSchema, setCellSchema] = useState(null);
+  const hasTranscripts = platformCapabilities?.has_transcripts ?? true;
+  const unitTitle = unitLabel.charAt(0).toUpperCase() + unitLabel.slice(1);
 
   // Fetch full gene list and cell schema once per dataset
   useEffect(() => {
@@ -294,14 +297,19 @@ function ColorBySection({ unitLabel = "cell" }) {
           >
             <option value="off">— choose mode —</option>
             <option value="gene_set">Gene set (selected species)</option>
-            <option value="metadata">Cell metadata</option>
+            <option value="metadata">{unitTitle} metadata</option>
           </select>
 
-          {/* Gene set info */}
+          {/* Gene set info. The "use Transcript Species" pointer is only shown
+              where that section exists — platforms without molecule coordinates
+              (Visium, Visium HD) hide it, so the hint would name a control the
+              user cannot find. Those platforms always sum the whole panel. */}
           {mode === "gene_set" && (
             <div style={{ marginTop: 4, fontSize: 10, color: "#888" }}>
               {selectedCount} of {allGenes.length} genes selected
-              <span style={{ color: "#555" }}> (use Transcript Species to adjust)</span>
+              <span style={{ color: "#555" }}>
+                {hasTranscripts ? " (use Transcript Species to adjust)" : " (whole panel)"}
+              </span>
             </div>
           )}
 
