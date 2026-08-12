@@ -287,6 +287,19 @@ class SeqfishReader(SpatialDatasetReader):
             # microns (div == pixel_size), px² when it is in pixels (div == 1.0).
             ps = self.pixel_size
             out["cell_area"] = df["area"] * ((ps / div) ** 2)
+
+        # Per-cell counts from CellxGene. seqFISH v2 ships no transcript→cell
+        # assignment, so unlike Xenium there is no molecule table to count; the
+        # authoritative per-cell total is the CellxGene row sum (total detected
+        # transcripts across all genes). Populate both fields the CellInfoPanel
+        # renders — otherwise "transcripts" / "total counts" sit blank on every
+        # seqFISH cell. Reuses the cached CellxGene frame, joined on cell_id.
+        cxg = self._cxg()
+        if cxg is not None:
+            totals = cxg.sum(axis=1)  # Series indexed by cell_id
+            counts = out["cell_id"].map(totals).fillna(0).astype(int)
+            out["transcript_counts"] = counts
+            out["total_counts"] = counts
         return out
 
     def _cells_full(self) -> Optional[pd.DataFrame]:

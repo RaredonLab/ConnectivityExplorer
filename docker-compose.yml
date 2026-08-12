@@ -26,6 +26,11 @@ services:
       # DuckDB memory cap — prevents a large parquet scan from consuming all
       # available RAM and making the container (and Docker Desktop VM) unresponsive.
       DUCKDB_MEMORY_LIMIT: ${DUCKDB_MEMORY_LIMIT:-8GB}
+      # Highest OME-TIFF level (in px) the tifffile builder loads whole. Only
+      # matters for JPEG2000 OME-TIFFs (Xenium, seqFISH DAPI) that libvips can't
+      # stream: the largest level within this limit becomes the deepest zoom.
+      # Raise it (needs proportionally more RAM) for sharper zoom on huge images.
+      MAX_TIFFFILE_DIM: ${MAX_TIFFFILE_DIM:-16384}
     ports:
       - "8000:8000"
     restart: unless-stopped
