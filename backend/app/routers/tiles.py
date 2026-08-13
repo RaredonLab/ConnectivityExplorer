@@ -11,7 +11,7 @@ import os
 
 from app.tiling.pyramid import (
     BLANK_IMAGE_NAME, ensure_blank_pyramid, ensure_pyramid,
-    get_dzi_descriptor, get_tile_path,
+    get_dzi_descriptor, get_or_synth_tile,
 )
 
 router = APIRouter()
@@ -76,9 +76,14 @@ def dzi_descriptor(dataset: str, image_name: str):
 
 @router.get("/{dataset}/dzi/{image_name}_files/{level}/{col}_{row}.{fmt}")
 def tile(dataset: str, image_name: str, level: int, col: int, row: int, fmt: str):
-    """Return a single DZI tile."""
+    """Return a single DZI tile.
+
+    Tiles above the deepest built level (large JPEG2000 OME-TIFFs are only built
+    to the level that fits MAX_TIFFFILE_DIM) are synthesised on demand by
+    upscaling, so deep zoom stays smooth-blurry rather than going black.
+    """
     dataset_path = DATA_ROOT / dataset
-    tile_path = get_tile_path(dataset_path, image_name, level, col, row, fmt)
+    tile_path = get_or_synth_tile(dataset_path, image_name, level, col, row, fmt)
     if tile_path is None or not tile_path.exists():
         raise HTTPException(404, "Tile not found")
     return FileResponse(tile_path, media_type=f"image/{fmt}")
