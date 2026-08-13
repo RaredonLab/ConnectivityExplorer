@@ -1,6 +1,49 @@
-# Public Xenium Datasets for Development & Testing
+# Public Datasets for Development & Testing
 
-This document lists publicly available 10x Genomics Xenium datasets suitable for developing and testing ConnectivityExplorer across diverse tissue types, species, and data configurations.
+This document lists publicly available datasets suitable for developing and testing
+TissuePlex across platforms, tissue types, species, and data configurations. Most of it
+covers 10x Xenium; see the classic Visium section at the end for the datasets the Visium
+reader was verified against.
+
+---
+
+## Classic Visium — reader verification set
+
+The two datasets the Visium reader was validated on. Both are Space Ranger 1.1.0, which
+means they carry the **headerless** `tissue_positions_list.csv` — and that is the common
+case, because every classic Visium dataset 10x serves without registration predates the
+Space Ranger 2.0 rename. The CytAssist-era 2.x downloads return HTTP 403.
+
+You only need two files per dataset, not the full `outs/`:
+
+```bash
+B=https://cf.10xgenomics.com/samples/spatial-exp/1.1.0/V1_Mouse_Kidney
+mkdir -p sample_data/visium_mouse_kidney && cd sample_data/visium_mouse_kidney
+curl -LO $B/V1_Mouse_Kidney_filtered_feature_bc_matrix.h5
+curl -LO $B/V1_Mouse_Kidney_spatial.tar.gz
+mv V1_Mouse_Kidney_filtered_feature_bc_matrix.h5 filtered_feature_bc_matrix.h5
+tar xzf V1_Mouse_Kidney_spatial.tar.gz && rm V1_Mouse_Kidney_spatial.tar.gz
+```
+
+| Dataset | Size | Spots in tissue | Notes |
+|---|---|---|---|
+| `V1_Mouse_Kidney` | 12 MB + 8 MB | 1,438 of 4,992 | The verification dataset. `visium_mouse_*/` is gitignored. |
+| `V1_Adult_Mouse_Brain` | 21 MB + 9 MB | — | Used only to cross-check the lattice geometry. |
+
+**What they established**, none of which the synthetic fixture could:
+
+- `tissue_hires_scalef` is 0.177 and 0.170 — nowhere near the 1.0 that hides a missing
+  coordinate multiply.
+- The in-row lattice pitch is exactly 138.00 fullres px on both, while
+  `spot_diameter_fullres` is 89.45 — a ratio of 0.648, proving that field measures a
+  ~64.8 µm detected footprint rather than the 55 µm capture spot. See the Visium section
+  in CLAUDE.md; deriving `pixel_size` from 55 µm is wrong by 18%.
+- Registration: 98.1% of `in_tissue` spots land on stained tissue and 99.5% of
+  out-of-tissue spots land on bare slide, measured as mean inverse intensity under each
+  spot polygon in the hires PNG.
+- NICHESv2 end to end on the kidney: 1,438 spots, 9,666 edges, 2,479 LRMs, 3.2M rows. Top
+  mechanisms include `Apoe|Lrp2` and `Cst3|Lrp2` — megalin-mediated proximal tubule
+  uptake, which is the expected kidney biology.
 
 ---
 

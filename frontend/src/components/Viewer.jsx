@@ -28,6 +28,7 @@ import { useEdges } from "../hooks/useEdges";
 import { useEdgeColors } from "../hooks/useEdgeColors";
 import { geneColor } from "../utils/geneColor";
 import AnnotationToolbar from "./AnnotationToolbar";
+import { DatasetPicker } from "./DatasetPicker";
 import EdgeInfoPanel from "./EdgeInfoPanel";
 import RenderingStatus from "./RenderingStatus";
 
@@ -120,38 +121,53 @@ function ViewerPanel({ panelIndex }) {
   // Recomputed in syncDeckFromOSD on every viewport change and on rotation change.
   const [rotModelMatrix, setRotModelMatrix] = useState(null);
 
+  // ── Shared settings: one sidebar drives every panel ───────────────────────
   const {
-    apiBase, dataset, activeImage,
-    imageSize, setImageSize,
+    apiBase,
     setViewport, setViewportActual,
     layers: layerState,
-    platformCapabilities, setPlatformCapabilities,
     cellColorEnabled, colorBy, cellColorPalette, categoryColorOverrides,
-    allGenes, selectedGenes, transcriptColorOverrides,
-    selectedCell, setSelectedCell,
-    edgeMinStrength, edgeDensity, edgeFile,
+    selectedGenes, transcriptColorOverrides,
+    edgeMinStrength, edgeDensity,
     edgeColorBy, edgeColorPalette, edgeDirectional, showAutocrine,
     edgeWidth, showArrowheads, arrowStyle, arrowheadScale,
     edgeOffset,
     autocrineRadius, autocrineLineWidth,
-    hiddenLrms, lrmCatalogue,
-    selectedEdge, setSelectedEdge,
-    setCellColorRange, setEdgeColorRange,
-    cellColorClamp, edgeColorClamp, setEdgeColorClamp,
-    categoricalOverrides, cellFilter, edgeFilter, setCellColorType,
+    hiddenLrms,
+    cellColorClamp, edgeColorClamp, setEdgeColorClamp, linkColorScale,
+    categoricalOverrides, cellFilter, edgeFilter,
     annotationMode,
-    pixelSize, setPixelSize,
     clearZoomMatch,
     activeRegion, addRegionPoint, cancelActiveRegion, commitRegion,
     regions, removeRegion,
     measurements, addMeasurement,
     clearAnnotations,
     panelCount,
-    transcriptFraction, setTranscriptStats,
-    cellBoundaryFraction, setCellBoundaryStats,
+    transcriptFraction,
+    cellBoundaryFraction,
     setLoadingKey,
     panelRotations, setPanelRotation,
+    selection, setSelectedCell, setSelectedEdge,
+    patchPanel,
   } = useStore();
+
+  // ── This panel's dataset-bound state ──────────────────────────────────────
+  // Everything derived from *which dataset this panel shows*: image dimensions,
+  // pixel size, capabilities, gene panel, LRM vocabulary, value ranges.
+  const panel = useStore((s) => s.panels[panelIndex]);
+  const {
+    dataset, activeImage, imageSize, platformCapabilities,
+    pixelSize, edgeFile, lrmCatalogue, allGenes,
+  } = panel;
+  // Convenience: write one or more fields of *this* panel.
+  const patch = useCallback((p) => patchPanel(panelIndex, p), [patchPanel, panelIndex]);
+
+  // The selection belongs to whichever panel produced it; only that panel
+  // highlights it, so a click in panel 1 does not light up panel 0.
+  const selectedCell = selection?.panelIndex === panelIndex && selection.kind === "cell"
+    ? selection.cell : null;
+  const selectedEdge = selection?.panelIndex === panelIndex && selection.kind === "edge"
+    ? selection.edge : null;
 
   const panelRotation = panelRotations[panelIndex] ?? 0;
 
@@ -209,18 +225,51 @@ function ViewerPanel({ panelIndex }) {
   useEffect(() => { syncRef.current = syncDeckFromOSD; }, [syncDeckFromOSD]);
   useEffect(() => { deckViewStateRef.current = deckViewState; }, [deckViewState]);
 
-  // Fetch platform info + capabilities once per dataset, only from panel 0
+  // Platform info + capabilities, per panel. This used to be panel-0-only
+  // because both panels showed the same dataset; now each panel needs its own —
+  // pixel_size drives measurement and zoom matching, and capabilities decide
+  // which layers this panel can serve at all.
   useEffect(() => {
-    if (panelIndex !== 0 || !dataset) return;
+    if (!dataset) return;
+    let cancelled = false;
     fetch(`${apiBase}/spatial/${dataset}/info`)
       .then((r) => r.ok ? r.json() : null)
       .then((info) => {
-        if (!info) return;
-        if (info.pixel_size) setPixelSize(parseFloat(info.pixel_size));
-        if (info.capabilities) setPlatformCapabilities(info.capabilities);
+        if (cancelled || !info) return;
+        patch({
+          ...(info.pixel_size ? { pixelSize: parseFloat(info.pixel_size) } : {}),
+          ...(info.capabilities ? { platformCapabilities: info.capabilities } : {}),
+        });
       })
       .catch(() => {});
-  }, [apiBase, dataset, panelIndex, setPixelSize, setPlatformCapabilities]);
+    return () => { cancelled = true; };
+  }, [apiBase, dataset, patch]);
+
+  // Gene panel for this panel's dataset. Needed here, not just in the sidebar:
+  // gene-set colouring sums whatever genes this panel actually measures, so a
+  // shared list from the other panel would sum genes it does not have.
+  useEffect(() => {
+    if (!dataset) return;
+    let cancelled = false;
+    fetch(`${apiBase}/spatial/${dataset}/genes`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((g) => { if (!cancelled && Array.isArray(g)) patch({ allGenes: g, genesLoaded: true }); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [apiBase, dataset, patch]);
+
+  // LRM catalogue for this panel's edge source. Fetched here rather than in the
+  // sidebar because it is per (dataset, edge file): the sidebar's mechanism
+  // checklist is the union of what the panels loaded.
+  useEffect(() => {
+    if (!dataset) return;
+    let cancelled = false;
+    fetch(`${apiBase}/edges/${dataset}/lrm-catalogue?edge_file=${encodeURIComponent(edgeFile)}`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((cat) => { if (!cancelled && Array.isArray(cat)) patch({ lrmCatalogue: cat }); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [apiBase, dataset, edgeFile, patch]);
 
   // ── OpenSeadragon init ────────────────────────────────────────────────────
   const dziUrl = `${apiBase}/tiles/${dataset}/dzi/${activeImage}.dzi`;
@@ -263,7 +312,7 @@ function ViewerPanel({ panelIndex }) {
       const src = viewer.world.getItemAt(0);
       if (src) {
         const sz = src.getContentSize();
-        setImageSize(sz.x, sz.y);
+        patch({ imageSize: { w: sz.x, h: sz.y } });
         setOsdOpenCount((c) => c + 1); // always triggers morphology opacity effect
       }
     });
@@ -324,12 +373,32 @@ function ViewerPanel({ panelIndex }) {
     const srcVp = useStore.getState().viewportActual[fromPanel];
     if (!srcVp) return;
 
-    const imgW = imageSize.w;
-    // Source visible dimensions in OSD-normalised units (OSD normalises by imgW)
-    const srcW = (srcVp.xmax - srcVp.xmin) / imgW;
-    const srcH = (srcVp.ymax - srcVp.ymin) / imgW;
+    // Match PHYSICAL scale — microns across the viewport — not fraction of image.
+    //
+    // This used to divide both panels' widths by the local imgW, i.e. it matched
+    // "the same proportion of the picture". With one dataset in both panels that
+    // was the same thing. With two it is meaningless: 20% of a 6.5 mm Visium
+    // capture area and 20% of a 107 µm seqFISH ROI differ by a factor of 60, and
+    // the panels would look matched while being nothing of the sort.
+    //
+    // Converting through each panel's own µm/px makes "match" mean what a
+    // scalebar would: the same number of microns spans the same screen width.
+    const srcPanel = useStore.getState().panels[fromPanel];
+    const srcPixelSize = srcPanel?.pixelSize || 1;
+    const srcImgW = srcPanel?.imageSize?.w;
+    if (!srcImgW) return;
 
-    // Keep my current center, apply source zoom
+    // Source extent in microns, then back into *my* image pixels, then into the
+    // OSD-normalised units fitBounds expects (OSD normalises by image width).
+    const srcMicronsW = (srcVp.xmax - srcVp.xmin) * srcPixelSize;
+    const srcMicronsH = (srcVp.ymax - srcVp.ymin) * srcPixelSize;
+    const myPixelSize = pixelSize || 1;
+    const imgW = imageSize.w;
+    const srcW = (srcMicronsW / myPixelSize) / imgW;
+    const srcH = (srcMicronsH / myPixelSize) / imgW;
+    if (!isFinite(srcW) || !isFinite(srcH) || srcW <= 0) return;
+
+    // Keep my current center, adopt the source's physical scale
     const center = viewerRef.current.viewport.getCenter(true);
     const newBounds = new OpenSeadragon.Rect(
       center.x - srcW / 2,
@@ -370,34 +439,30 @@ function ViewerPanel({ panelIndex }) {
     if (e.shiftKey) {
       const edgeInfo = deckRef.current.pickObject({ x, y, radius: 8, layerIds: ["edges-directed", "edges-autocrine", "tissue-graph"] });
       if (edgeInfo?.object) {
-        setSelectedEdge(edgeInfo.object.edge);
-        setSelectedCell(null);
+        setSelectedEdge(edgeInfo.object.edge, panelIndex);
         return;
       }
       const cellInfo = deckRef.current.pickObject({ x, y, radius: 6, layerIds: ["cell-segments-fill"] });
       if (cellInfo?.object) {
-        setSelectedCell(cellInfo.object);
-        setSelectedEdge(null);
+        setSelectedCell(cellInfo.object, panelIndex);
       } else {
-        setSelectedCell(null);
-        setSelectedEdge(null);
+        setSelectedCell(null, panelIndex);
       }
       return;
     }
 
     const cellInfo = deckRef.current.pickObject({ x, y, radius: 6, layerIds: ["cell-segments-fill"] });
     if (cellInfo?.object) {
-      setSelectedCell(cellInfo.object);
-      setSelectedEdge(null);
+      setSelectedCell(cellInfo.object, panelIndex);
       return;
     }
-    setSelectedCell(null);
+    setSelectedCell(null, panelIndex);
 
     const edgeInfo = deckRef.current.pickObject({ x, y, radius: 8, layerIds: ["edges-directed", "edges-autocrine", "tissue-graph"] });
     if (edgeInfo?.object) {
-      setSelectedEdge(edgeInfo.object.edge);
+      setSelectedEdge(edgeInfo.object.edge, panelIndex);
     } else {
-      setSelectedEdge(null);
+      setSelectedEdge(null, panelIndex);
     }
   }, [setSelectedCell, setSelectedEdge]);
 
@@ -518,7 +583,7 @@ function ViewerPanel({ panelIndex }) {
   const hasBoundaries = platformCapabilities?.has_boundaries ?? true;
 
   const { transcripts, total: transcriptTotal, loading: transcriptsLoading } = useTranscripts(
-    apiBase, dataset, viewport, imageSize, transcriptsVisible && hasTranscripts, transcriptFraction, selectedGenes
+    apiBase, dataset, viewport, imageSize, transcriptsVisible && hasTranscripts, transcriptFraction, selectedGenes, allGenes
   );
 
   // visibleTranscripts: server already filtered by selectedGenes, so this is a no-op
@@ -530,7 +595,7 @@ function ViewerPanel({ panelIndex }) {
   // Expose live shown/total counts to the LayerPanel via the store (panel 0 only).
   // Use visibleTranscripts.length so the stat always reflects the selected species.
   useEffect(() => {
-    if (panelIndex === 0) setTranscriptStats(visibleTranscripts.length, transcriptTotal);
+    patch({ transcriptStats: { shown: visibleTranscripts.length, total: transcriptTotal } });
   }, [visibleTranscripts.length, transcriptTotal]); // eslint-disable-line
 
   const {
@@ -545,7 +610,7 @@ function ViewerPanel({ panelIndex }) {
 
   // Expose live cell boundary counts to LayerPanel (panel 0 only).
   useEffect(() => {
-    if (panelIndex === 0) setCellBoundaryStats(cellPolygons.length, cellBoundaryTotal);
+    patch({ cellBoundaryStats: { shown: cellPolygons.length, total: cellBoundaryTotal } });
   }, [cellPolygons.length, cellBoundaryTotal]); // eslint-disable-line
 
   const { edges, loading: edgesLoading } = useEdges(
@@ -559,23 +624,44 @@ function ViewerPanel({ panelIndex }) {
   const cellCategorical = categoricalOverrides[`cell::${colorBy?.field}`] ?? null;
   const edgeCategorical = categoricalOverrides[`edge::${edgeColorBy?.field}`] ?? null;
 
+  // ── Shared colour scale ───────────────────────────────────────────────────
+  // With two panels showing two datasets, letting each auto-range to its own
+  // data produces two viridis pictures that look comparable and are not. When
+  // linked (the default) both panels clamp to the union of the two ranges, so
+  // the single legend is true for everything on screen. An explicit clamp from
+  // the sliders always wins — the user asked for that range specifically.
+  const allPanels = useStore((s) => s.panels);
+  const linkedRange = useMemo(() => {
+    if (!linkColorScale || panelCount < 2) return null;
+    const rs = allPanels.slice(0, panelCount)
+      .map((p) => p.cellColorRange).filter((r) => r && r.vmin != null && r.vmax != null);
+    if (rs.length < 2) return null;
+    return { lo: Math.min(...rs.map((r) => r.vmin)), hi: Math.max(...rs.map((r) => r.vmax)) };
+  }, [allPanels, panelCount, linkColorScale]);
+
+  const effectiveCellClamp = useMemo(() => (
+    linkedRange
+      ? { low: cellColorClamp?.low ?? linkedRange.lo, high: cellColorClamp?.high ?? linkedRange.hi }
+      : cellColorClamp
+  ), [linkedRange, cellColorClamp]);
+
   const {
     colorValues, vmin: cellVmin, vmax: cellVmax,
     type: cellType, categories: cellCategories, loading: cellColorsLoading,
   } = useCellColors(
     apiBase, dataset, colorBy, allGenes, selectedGenes, cellColorPalette,
-    cellColorEnabled, cellColorClamp, categoryColorOverrides, cellCategorical
+    cellColorEnabled, effectiveCellClamp, categoryColorOverrides, cellCategorical
   );
   // Only update shared store ranges from panel 0 to avoid redundant updates
   useEffect(() => {
-    if (panelIndex === 0) setCellColorRange(cellVmin, cellVmax);
+    patch({ cellColorRange: { vmin: cellVmin, vmax: cellVmax } });
   }, [cellVmin, cellVmax]); // eslint-disable-line
 
   // The backend is the authority on whether a column is categorical, so report
   // the type it actually returned rather than letting the panel re-derive it
   // from the schema dtype — the two disagreed for low-cardinality integers.
   useEffect(() => {
-    if (panelIndex === 0) setCellColorType(cellType, cellCategories);
+    patch({ cellColorType: cellType, cellColorCategories: cellCategories ?? [] });
   }, [cellType, cellCategories]); // eslint-disable-line
 
   const edgeColorEnabled = edgeColorBy.mode !== "default";
@@ -584,7 +670,7 @@ function ViewerPanel({ panelIndex }) {
     edgeColorEnabled, edgeColorClamp, edges, edgeFile, edgeCategorical
   );
   useEffect(() => {
-    if (panelIndex === 0) setEdgeColorRange(edgeVmin, edgeVmax);
+    patch({ edgeColorRange: { vmin: edgeVmin, vmax: edgeVmax } });
   }, [edgeVmin, edgeVmax]); // eslint-disable-line
 
   useEffect(() => {
@@ -593,7 +679,7 @@ function ViewerPanel({ panelIndex }) {
     }
   }, [edgeP95]); // eslint-disable-line
 
-  useEffect(() => { setSelectedEdge(null); }, [dataset]); // eslint-disable-line
+  useEffect(() => { setSelectedEdge(null, panelIndex); }, [dataset]); // eslint-disable-line
 
   // ── Loading state → store (for RenderingStatus badge) ────────────────────
   // Aggregate all hook loading booleans into a single per-panel key so the
@@ -695,10 +781,15 @@ function ViewerPanel({ panelIndex }) {
     return result;
   }, [edges]);
 
+  // Both layers apply the LRM filter identically. Autocrine used to skip the
+  // visible_lrm_count test, so hiding every mechanism removed the directed edges
+  // and left a ring on every cell — which reads as the autocrine layer ignoring
+  // the controls entirely.
+  const hasVisibleLrms = (r) => (r.visible_lrm_count ?? r.lrm_count ?? 0) > 0;
   const { directedEdges, autocrineCells } = useMemo(() => ({
-    directedEdges: edges.filter((r) => !r.is_autocrine && (r.visible_lrm_count ?? r.lrm_count ?? 0) > 0),
+    directedEdges: edges.filter((r) => !r.is_autocrine && hasVisibleLrms(r)),
     autocrineCells: edges
-      .filter((r) => r.is_autocrine)
+      .filter((r) => r.is_autocrine && hasVisibleLrms(r))
       .map((r) => ({ ...r, x: r.x1, y: r.y1 })),
   }), [edges]);
 
@@ -1032,34 +1123,51 @@ function ViewerPanel({ panelIndex }) {
       {/* Loading / computing badge — appears ~400ms after any fetch starts */}
       <RenderingStatus panelIndex={panelIndex} />
 
-      {/* Edge info panel — only rendered in panel 0 to avoid duplication */}
-      {panelIndex === 0 && selectedEdge && (
+      {/* Edge info panel — rendered by the panel that owns the selection, so it
+          resolves against that panel's dataset and edge file. It used to be
+          pinned to panel 0, which was fine when both panels shared a dataset and
+          would show the wrong dataset's edge now. `selectedEdge` is already
+          null unless this panel made the selection, so this cannot duplicate. */}
+      {selectedEdge && (
         <EdgeInfoPanel
           apiBase={apiBase}
           dataset={dataset}
           edgeId={selectedEdge}
           edgeFile={edgeFile}
-          onClose={() => setSelectedEdge(null)}
+          onClose={() => setSelectedEdge(null, panelIndex)}
         />
       )}
 
-      {/* Dataset / panel / transcript label */}
+      {/* Panel header. In split mode this carries the panel's own dataset /
+          image / edge-source pickers, because those are the things that cannot
+          be shared once two panels can show two datasets. In single mode it
+          stays a passive label and the pickers live in the sidebar, exactly
+          where they have always been. */}
       <div
         style={{
-          position: "absolute", top: 8, left: 8,
+          // Bottom-left: the OSD zoom buttons and the annotation toolbar own the
+          // top of the panel, and the navigator owns bottom-right. In split mode
+          // this strip holds real controls, so it cannot sit under them.
+          position: "absolute", bottom: 8, left: 8,
           color: "#aaa", fontFamily: "monospace", fontSize: 11,
-          background: "rgba(0,0,0,0.55)", padding: "2px 6px", borderRadius: 3,
-          pointerEvents: "none",
+          background: "rgba(0,0,0,0.7)", padding: "3px 7px", borderRadius: 3,
+          pointerEvents: panelCount >= 2 ? "auto" : "none",
+          display: "flex", alignItems: "center", gap: 6, maxWidth: "calc(100% - 16px)",
         }}
       >
-        {dataset}{activeImage && activeImage !== BLANK_IMAGE_NAME ? ` / ${activeImage}` : ""}
-        {panelCount >= 2 && (
-          <span style={{ marginLeft: 6, color: "#555" }}>· panel {panelIndex + 1}</span>
+        {panelCount >= 2 ? (
+          <>
+            <span style={{ color: "#555" }}>{panelIndex + 1}</span>
+            <DatasetPicker panelIndex={panelIndex} compact />
+          </>
+        ) : (
+          <span>
+            {dataset}
+            {activeImage && activeImage !== BLANK_IMAGE_NAME ? ` / ${activeImage}` : ""}
+          </span>
         )}
         {transcripts.length > 0 && (
-          <span style={{ marginLeft: 8, color: "#777" }}>
-            {transcripts.length} transcripts
-          </span>
+          <span style={{ color: "#777" }}>{transcripts.length} tx</span>
         )}
       </div>
     </div>
@@ -1070,9 +1178,13 @@ function ViewerPanel({ panelIndex }) {
 // Thin wrapper: renders one or two ViewerPanels side by side.
 
 export default function Viewer() {
-  const { panelCount, dataset } = useStore();
+  const panelCount = useStore((s) => s.panelCount);
+  // Panel 0 gates the placeholder: it is the one DatasetPicker initialises first,
+  // and a second panel still resolving its own dataset should not blank the one
+  // that is already drawing.
+  const panel0Dataset = useStore((s) => s.panels[0].dataset);
 
-  if (!dataset) {
+  if (!panel0Dataset) {
     return (
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center",
                     width: "100%", height: "100%", color: "#555", fontFamily: "monospace", fontSize: 13 }}>

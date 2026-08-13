@@ -4,6 +4,10 @@ xenium_human_breast_2fov/
 merscope-*/
 cosmx-*/
 visium-*/
+# Real 10x Visium downloads. visium_tiny/ is the committed synthetic fixture and
+# is deliberately NOT matched by this pattern.
+visium_mouse_*/
+visium_human_*/
 
 # seqFISH / Spatial Genomics GenePS datasets.
 # The scverse test dataset (s3.embl.de/spatialdata/raw_data/seqfish-2-test-dataset.zip)

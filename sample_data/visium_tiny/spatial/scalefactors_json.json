@@ -1,0 +1,6 @@
+{
+    "spot_diameter_fullres": 259.2,
+    "fiducial_diameter_fullres": 648.0,
+    "tissue_hires_scalef": 0.08,
+    "tissue_lowres_scalef": 0.024
+}

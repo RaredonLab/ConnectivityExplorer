@@ -46,14 +46,19 @@ export function useEdgeColors(
   const [rawMeta, setRawMeta] = useState(null);
 
   // ── lrm_set: compute synchronously from edges.visible_score_sum ──────────
+  //
+  // Autocrine edges are included. They used to be filtered out here, which left
+  // the autocrine rings permanently on their default orange no matter what the
+  // colour control said — the one edge type that ignored "colour by LRM set".
+  // A shared scale is safe: measured across the bundled datasets, autocrine
+  // score_sum medians run 1.00–1.33× the directed medians, so they neither
+  // dominate the range nor need a scale of their own. One scale, one legend,
+  // and every edge on screen is described by it.
   const lrmSetResult = useMemo(() => {
     if (!enabled || edgeColorBy?.mode !== "lrm_set" || !edges || edges.length === 0) {
       return null;
     }
-    const directed = edges.filter((e) => !e.is_autocrine);
-    if (directed.length === 0) return null;
-
-    const entries = directed.map((e) => [e.edge, e.visible_score_sum ?? 0]);
+    const entries = edges.map((e) => [e.edge, e.visible_score_sum ?? 0]);
     const scores = entries.map(([, v]) => v);
     let min = Infinity, max = -Infinity;
     for (const v of scores) { if (v < min) min = v; if (v > max) max = v; }

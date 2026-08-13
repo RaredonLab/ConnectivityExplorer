@@ -68,6 +68,9 @@ _locks_guard = threading.Lock()
 # Paths already resolved this process, to skip the stat/manifest check per query.
 _resolved: dict[str, Optional[Path]] = {}
 
+# Sources with a build currently running in a background thread.
+_building: set[str] = set()
+
 
 def _lock_for(key: str) -> threading.Lock:
     with _locks_guard:
@@ -106,7 +109,13 @@ def sorted_path(
     if not ENABLED or not source.exists():
         return None
 
-    key = str(source.resolve())
+    # Keyed on the sort columns as well as the path. The manifest check below
+    # already refuses a cache sorted on a different column pair, but this memo
+    # sits in front of it and would hand back that exact file on every later
+    # call — defeating the check written to prevent it. Not reachable today
+    # (each source is queried with one fixed column pair) but silent if it ever
+    # were: the data would be right and the row-group pruning wrong.
+    key = f"{source.resolve()}::{x_col}::{y_col}"
     if key in _resolved:
         return _resolved[key]
 
@@ -146,9 +155,66 @@ def sorted_path(
             print(f"[spatial_cache] {source.name}: cache is stale "
                   f"(source or sort columns changed); rebuilding")
 
-        built = _build(source, cache_file, manifest, stamp, x_col, y_col)
-        _resolved[key] = built
-        return built
+        # Build off the request thread and serve the source file meanwhile.
+        #
+        # The build sorts the whole file — on a real Xenium run that is 132M rows
+        # and minutes of work, against nginx's 120s proxy_read_timeout. Building
+        # inline meant the very first transcript request could not succeed: it
+        # either timed out or, before the memory fixes in duck.py, was killed
+        # outright. Either way the hook saw a non-ok response, returned [], and
+        # the layer rendered empty — indistinguishable from "this dataset has no
+        # transcripts", which is exactly how it was reported.
+        #
+        # The unsorted file answers the same query correctly, just slower, so
+        # there is no reason to make anyone wait for the index. Queries are
+        # served from the source until the build lands, then pick it up.
+        _start_background_build(key, source, cache_file, manifest, stamp, x_col, y_col)
+        return None
+
+
+def _start_background_build(
+    key: str,
+    source: Path,
+    cache_file: Path,
+    manifest: Path,
+    stamp: dict,
+    x_col: str,
+    y_col: str,
+) -> None:
+    """Kick off an index build in a daemon thread, at most one per source.
+
+    `_resolved` is deliberately left unset while a build is in flight: it is the
+    "decided forever" cache, and writing None into it would pin this source to
+    the unsorted file for the life of the process even after the index landed.
+    Queries fall through to the source until the thread publishes a result.
+    """
+    with _locks_guard:
+        if key in _building:
+            return
+        _building.add(key)
+
+    def run() -> None:
+        try:
+            built = _build(source, cache_file, manifest, stamp, x_col, y_col)
+            # A failed build resolves to None on purpose — retrying a build that
+            # just failed on every subsequent viewport change would turn one bad
+            # file into a rebuild storm.
+            _resolved[key] = built
+        except Exception as exc:
+            # _build already swallows its own errors, so reaching here means
+            # something unexpected. Catch it anyway: an exception escaping a
+            # thread is printed to stderr and then lost, leaving the key stuck
+            # in _building so no later request would ever retry the build.
+            print(f"[spatial_cache] background build for {source.name} failed: {exc}")
+            _resolved[key] = None
+        finally:
+            with _locks_guard:
+                _building.discard(key)
+
+    print(f"[spatial_cache] {source.name}: building index in the background; "
+          f"queries use the unsorted file until it is ready")
+    threading.Thread(target=run, name=f"spatial-index-{source.name}",
+                     daemon=True).start()
 
 
 def _build(

@@ -55,6 +55,7 @@ The backend uses an abstract reader pattern. All platform readers inherit from
 |---|---|
 | Xenium (10x Genomics) | `experiment.xenium` |
 | Visium HD (10x Genomics) | `binned_outputs/square_*um/` (or a top-level `square_???um/`) |
+| Visium classic (10x Genomics) | `spatial/scalefactors_json.json` + a `tissue_positions*` file |
 | MERSCOPE (Vizgen) | `cell_by_gene.csv` or `cell_metadata.csv` |
 | CosMx (Nanostring) | `*_tx_file.csv` |
 | seqFISH (Spatial Genomics) | `*_CellCoordinates*.csv` — a glob, so registered **last** |
@@ -73,6 +74,12 @@ and boundary layers rather than returning empty arrays for them.
 - Visium HD: implemented against a real Space Ranger 4.0.1 `outs/` tree — bins, bin
   outlines, expression, and both color-value modes. `has_transcripts: False` (bin-level
   UMI counts only, no molecule coordinates); `unit_label: "bin"`. See its own section.
+- Visium classic (v1/v2): fully implemented — spots, spot outlines as circles,
+  expression, and both color-value modes. `has_transcripts: False`;
+  `unit_label: "spot"`. Shares `spaceranger.py` with Visium HD. Verified against real
+  Space Ranger output (`V1_Mouse_Kidney`, `V1_Adult_Mouse_Brain`), including a
+  registration check: 98.1% of `in_tissue` spots land on stained tissue and 99.5% of
+  out-of-tissue spots land on bare slide. See its own section.
 - MERSCOPE: cells, transcripts, genes, color-values (metadata + gene-set) implemented;
   `cell_boundaries()` returns empty and `has_boundaries: False` (HDF5 polygon format
   not yet parsed)
@@ -116,6 +123,10 @@ backend/
       metadata_filter.py     Categorical-vs-continuous typing + the MetadataFilter
                              subsetting spec; shared by cells and edges (#35, #45)
       spatial_cache.py       Spatially-sorted parquet cache (build on first access)
+      spaceranger.py         Shared base for the two 10x array platforms — scalefactors,
+                             tissue_positions, the feature-matrix h5, and the hires
+                             coordinate scaling. Read before touching either reader.
+      visium_reader.py       Visium classic — spots as circle polygons; see its own section
       visium_hd_reader.py    Visium HD — bins as square polygons; see its own section
       merscope_reader.py     MERSCOPE implementation (inherits SpatialDatasetReader)
       cosmx_reader.py        CosMx implementation (inherits SpatialDatasetReader)
@@ -129,7 +140,7 @@ backend/
   Dockerfile
   tests/
     golden_snapshot.py       Reader regression guard — see Development Workflow
-    golden_baseline.json     Recorded baseline (191 probes / 7 datasets)
+    golden_baseline.json     Recorded baseline (238 probes / 8 datasets)
 
 frontend/
   src/
@@ -169,18 +180,33 @@ sample_data/                 Partially gitignored — default data mount for loc
                              and licence-restricted datasets are ignored.
   make_edges.py              Synthetic edges.parquet generator
   make_seqfish.py            Synthetic seqFISH v2 ROI generator (committable fixture)
+  make_visium.py             Synthetic classic Visium generator (committable fixture);
+                             non-identity tissue_hires_scalef on purpose — see below
+  make_edge_metadata.py      Demo edge-metadata/ for any dataset with edges. Three
+                             columns derived from the edge file, one clearly-named
+                             invented flag, plus a README in each folder saying which
+                             is which. Nothing here is analysis output.
 r/                           NICHESv2 → edges.parquet. See r/README.md.
   niches_xenium.R            Xenium — coordinates already µm; read this one first
   niches_seqfish.R           seqFISH — dense CSV counts, per-version coordinate units
   niches_visium_hd.R         Visium HD — pixel coordinates, must convert to µm
+  niches_visium.R            Visium classic — same, but µm/px must be derived from the
+                             55 µm spot spec; checks it against the 100 µm pitch
+  niches_merscope.R          MERSCOPE — already µm; EntityID must be read as character
+  niches_cosmx.R             CosMx — (fov, cell_ID) identity; shift to the reader's
+                             origin, then px → µm
   niches_common.R            shared helpers (10x h5 reader, LR-coverage check, validation)
   *_PPLR.R                   older personal pipeline with hardcoded paths; reference only
 docs/
   data_format.md             edges.parquet column spec for NICHESv2 R export
   setup.md                   Docker deployment guide (lab-facing)
   cloud-deploy.md            DigitalOcean deployment runbook (~$106–116/mo)
-  public_datasets.md         Links to public Xenium datasets used for development
-  index.html, demo.gif       Landing page + README demo animation
+  public_datasets.md         Public datasets used for development, and the classic
+                             Visium pair the reader was verified against
+  index.html                 The user manual, published to GitHub Pages at
+                             https://raredonlab.github.io/TissuePlex/ — hand-written
+                             HTML, no build step. Update it when a UI control changes.
+  demo.gif                   README demo animation
 OBS/                         Archived, superseded planning docs. Provenance only —
                              NOT a specification. See OBS/README.md.
 NICHESv2_package_design.md   Design doc for the separate NICHESv2 R package (not this repo)
@@ -444,9 +470,40 @@ The selection is built from `allGenes` (fetched once per dataset from
 - **Expanded picker**: full gene list (searchable) with checkboxes, `all` (→ null)
   and `none` (→ empty Set) buttons
 
-`toggleSelectedGene(gene)`: if `selectedGenes` is null, starts a new Set with just
-that gene. If it's a Set, toggles membership. Opening the picker while null shows all
-genes as checked; unchecking one starts an allowlist.
+`toggleSelectedGene(gene)` **must agree with what the checkbox is showing**, and this
+is the one thing to get right here. The picker renders `checked = selectedGenes === null
+|| selectedGenes.has(gene)`, so in the null state *every box is ticked*. A click therefore
+means **uncheck this one** — the action builds the allowlist "everything except this gene"
+from the union of `panels[*].allGenes`. Toggling the last unchecked gene back on collapses
+the Set to `null`, so "no filter" stays single-valued and hundreds of gene names stay out
+of the request URL.
+
+It used to start an allowlist containing *only* the clicked gene — the exact inverse. The
+symptom did not look like a filter bug: on a 480-gene Xenium panel one click took the
+transcript layer from 200,000 dots to ~360, which reads as "transcripts stopped working".
+Present since v0.2.0 (`c52dbc0`).
+
+**The filter is sent as an allowlist or as its complement, whichever is shorter**
+(`genes=` vs `exclude_genes=`). This is not an optimisation — it is what keeps the
+feature working at all. The list travels in the query string of a GET, and measured
+against this stack, 479 of 480 genes is a **7,780-byte URL, ~220 bytes under nginx's
+8 KB request-line limit**, while 600 genes returned **414**. Deselecting a handful of
+genes from a large panel is the ordinary case and produces exactly that shape, so a
+Xenium Prime 5K run would have failed on the first click. `exclude_genes` is resolved
+back to an allowlist in `spatial.py` against `reader.gene_list()`, so no reader sees
+the inverted form. `nginx.conf` also raises `large_client_header_buffers` to 64k, which
+covers the worst case the complement rule can still produce (half a panel).
+
+Note the two forms are equivalent to each other but **not** to sending no filter at all:
+`gene_list()` omits controls and blanks, so any explicit selection drops them while
+"no filter" keeps them (measured: 35,013 vs 34,997 rows in one viewport). That predates
+this change and is why the picker never lists control probes.
+
+An **empty** `selectedGenes` Set short-circuits the fetch. It means "show no species",
+but omitting the gene parameter means "no filter" to the backend, so the request used to
+return the full 200K-row cap for Viewer's client-side filter to discard — nothing drew,
+which looked right, while ~20 MB was fetched per pan and the layer badge reported the
+unfiltered total against an empty canvas.
 
 `useCellColors` `gene_set` mode: if `selectedGenes === null`, uses all `allGenes`;
 otherwise uses `[...selectedGenes]`.
@@ -499,6 +556,46 @@ Results set `selectedCell` or `selectedEdge` in the store.
   Reads `viewports[panelIndex]` from the store for its own viewport-bounded fetches.
 - **`Viewer`** (default export) — thin wrapper; renders `<ViewerPanel panelIndex={0} />`
   always, plus `<ViewerPanel panelIndex={1} />` when `panelCount >= 2`.
+
+**Two panels can now show two different datasets.** Everything bound to *which
+dataset a panel shows* lives in `panels[panelIndex]` (store.js `makePanel()`):
+`dataset`, `activeImage`, `imageSize`, `platformCapabilities`, `pixelSize`,
+`edgeFile`, `lrmCatalogue`, `allGenes`, the colour ranges, and the shown/total
+stats. Each of those differs between datasets, so none of them can be global.
+
+Style and choice settings — layer opacity, palettes, colour-by, filters, LRM
+selection, edge geometry — deliberately stay **shared**: one sidebar drives both
+panels, which is what makes a side-by-side comparison comparable. The sidebar
+reconciles across panels with `hooks/usePanels.js`, whose rule is **union, then
+degrade per panel**: offer a control if *either* panel can use it, and let the
+panel that cannot render nothing. Intersecting instead would hide controls that
+work perfectly well on one side, which is worse when the point is comparing
+unlike things. `unit_label` becomes the neutral "unit" when the panels disagree.
+
+Consequences worth knowing:
+
+- **The dataset / image / edge-source pickers move into each panel's header** in
+  split mode, because an image name or edge file only means something relative to
+  one dataset. In single-panel mode they stay in the sidebar, unchanged.
+- **Changing either panel's dataset resets the shared column-, gene- and
+  mechanism-named settings** (filters, colour-by field, gene allowlist, hidden
+  LRMs). It has to: a filter naming a column the new dataset lacks 400s on every
+  viewport change. The cost is that switching one panel clears the other's
+  filter. That goes away when these become per-panel.
+- **Selection carries its panel index** (`selection = {panelIndex, kind, …}`), so
+  `CellInfoPanel` / `EdgeInfoPanel` and region export resolve against the dataset
+  that was actually clicked. `EdgeInfoPanel` used to be pinned to panel 0.
+- **⇔ Match zoom matches physical scale, not fraction of image.** It used to
+  divide both viewports by the local image width, i.e. match "the same proportion
+  of the picture" — identical behaviour when both panels showed one dataset, and
+  meaningless across two. 20% of a 6.5 mm Visium capture area and 20% of a 55 µm
+  seqFISH ROI differ by 55×. It now converts through each panel's own `pixelSize`
+  so the same number of microns spans the same screen width, exactly as a
+  scalebar would. Verified across Visium↔seqFISH: 2997 µm vs 55 µm → 55 µm both.
+- **`linkColorScale` (default on) shares one colour range across panels.** This
+  is figure integrity, not preference: two viridis panels that each auto-ranged
+  to their own data look comparable and are not — one's yellow might be 40 counts
+  and the other's 4,000. An explicit clamp from the sliders always wins.
 
 **What is per-panel (local state / per-instance):**
 - OSD viewer instance (`viewerRef`)
@@ -669,19 +766,146 @@ Visium HD reader would show an empty canvas. Emitting squares makes fill, outlin
 colour-by, picking and region selection all work through the existing layers with no
 frontend change at all.
 
-**Coordinates.** `pxl_col/row_in_fullres` are already full-resolution image pixels, which
-is exactly TissuePlex's contract, so they pass through untouched. `pixel_size` is
-`microns_per_pixel` from the scalefactors and is used only to label distances.
+**Coordinates.** See the shared section below — `pxl_col/row_in_fullres` are *full
+resolution*, and the image TissuePlex renders is not.
 
 The bundled fixture **cannot catch a missing scalefactor multiply**: it has
 `tissue_hires_scalef = 1.0` and `microns_per_pixel = 1.003`, both effectively identity.
 Real datasets run ~0.02–0.2 and ~0.25. A passing render here is necessary, not sufficient —
-see `sample_data/visium_hd_tiny/PROVENANCE.md`.
+see `sample_data/visium_hd_tiny/PROVENANCE.md`. `sample_data/visium_tiny` was built with a
+non-identity factor precisely to close that gap.
 
-Bin selection defaults to `square_008um` (Space Ranger's own analysis default, and
-`spatialdata-io`'s `DEFAULT_BIN`), falling back to the coarsest bin present. `info()`
-reports `bin` and `available_bins`; exposing bin choice in the UI would be the natural
-follow-up, in the shape of the edge-file picker.
+**Bin selection follows the edge file when there is one.** Barcodes are bin-size
+specific — `s_008um_00172_00043-1` and `s_016um_00066_00065-1` name different things —
+so serving a different bin than `edges.parquet` was built on leaves the two with *zero*
+ids in common. The edges still draw, because they carry their own coordinates, but
+nothing joins: clicking a bin finds no edge, the metadata filter drops every edge, and
+the tissue graph floats free of the bins beneath it. The bundled fixture shipped that way
+for two releases — `niches_visium_hd.R` defaulted to 16 µm while the reader defaulted to
+8 µm.
+
+`_bin_from_edges()` now reads one barcode from the edge file and prefers the matching
+bin. Without edges it falls back to `square_008um` (Space Ranger's own analysis default,
+and `spatialdata-io`'s `DEFAULT_BIN`), then to the coarsest bin present. `info()` reports
+`bin` and `available_bins`; a bin picker in the UI, in the shape of the edge-file picker,
+would still be the natural follow-up for datasets with no edges.
+
+There is a real reason the two disagreed: **8 µm bins are usually too sparse to score.**
+Regenerating the fixture at 8 µm gave 233,531 edges of which 83 were scored; at 16 µm it
+is 66,001 edges across 69 LRMs. Whoever runs NICHESv2 makes that call, and the viewer now
+follows it.
+
+Unexploited: `segmented_outputs/cell_segmentations.geojson`, which Space Ranger 4.x emits
+and which would turn this from a bin viewer into a single-cell one. The seqFISH reader
+already has GeoJSON ring-parsing to lift.
+
+---
+
+## Visium classic (readers/visium_reader.py)
+
+The original Visium slide: 4,992 spots, each **55 µm across on a 100 µm hexagonal
+pitch**, over a 6.5 × 6.5 mm capture area. One to ten cells per spot, so a spot is a
+neighbourhood, not a cell — say so in figure legends, and note that NICHESv2 on this
+platform scores spot–spot signalling.
+
+```
+dataset_dir/                      ← point at the *contents* of Space Ranger's outs/
+  filtered_feature_bc_matrix.h5
+  spatial/
+    tissue_positions.csv          barcode, in_tissue, array_row, array_col,
+                                  pxl_row_in_fullres, pxl_col_in_fullres
+    scalefactors_json.json        spot_diameter_fullres, tissue_hires_scalef,
+                                  tissue_lowres_scalef, fiducial_diameter_fullres
+    tissue_hires_image.png
+    tissue_lowres_image.png
+```
+
+Three things differ from Visium HD, and all three are traps:
+
+- **There is no `microns_per_pixel`**, and the obvious replacement is wrong by 18%.
+  Classic Visium scalefactors carry only those four keys; 10x deliberately does not record
+  image pixel size, noting that "prior knowledge of the image pixel sizes is not used".
+  So `pixel_size` has to be derived — from the **100 µm lattice pitch**, measured off the
+  positions table, *not* from `spot_diameter_fullres`.
+
+  Measured independently on `V1_Mouse_Kidney` and `V1_Adult_Mouse_Brain`:
+
+  | | kidney | brain |
+  |---|---|---|
+  | in-row pitch (fullres px) | 138.00 | 138.00 |
+  | `spot_diameter_fullres` | 89.46 | 89.44 |
+  | ratio | 0.6482 | 0.6481 |
+
+  `spot_diameter_fullres` is Space Ranger's **detected spot footprint** — ~64.8 µm at that
+  ratio, not the 55 µm nominal capture diameter. 10x's own docs say as much, describing
+  classic Visium spot diameters as "approximately 60–70 µm" and warning they are
+  estimates. Deriving from 55 µm yields 0.615 µm/px where the truth is 0.725, and
+  reconstructs a 5.4 × 5.7 mm capture area against the specified 6.5 × 6.5 mm; the pitch
+  derivation reconstructs 6.35 × 6.67 mm. The pitch is also better conditioned — it
+  averages thousands of positions in a rigid array template, where the diameter is one
+  estimate of a fuzzy edge.
+
+  **This was shipped wrong and caught only by real data.** The first version of
+  `make_visium.py` set `spot_diameter_fullres = 55 / microns_per_pixel`, which made the
+  fixture a tautology: it confirmed whatever derivation the reader used. It now emits the
+  real 0.648 ratio, so the bad derivation produces an 85 µm nearest-neighbour spacing
+  against the 100 µm truth — the same failure the real datasets show.
+
+  `info()` reports `pixel_size_source`: `"lattice_pitch"` normally, `"spot_diameter"` when
+  the positions table is too sparse to measure a pitch (< 20 in-row samples) and the
+  reader falls back on the 64.8 µm constant. Everything downstream inherits whichever was
+  used — the measurement tool, and the placement of `edges.parquet` micron coordinates.
+
+- **Spots are drawn at `spot_diameter_fullres`, i.e. the ~65 µm detected footprint**, not
+  the 55 µm capture area. That matches Loupe, scanpy and squidpy, so TissuePlex does not
+  render Visium differently from every other viewer; `info()` reports both
+  `spot_capture_diameter_um` and `detected_spot_um` so the distinction is visible.
+- **`tissue_positions_list.csv` (Space Ranger < 2.0) has no header row.** Read with
+  pandas' default header inference it eats the first spot and mislabels every column.
+  `spaceranger.py::_read_positions_table` names the columns explicitly for that filename.
+- **`tissue_hires_scalef` is genuinely far from 1** — around 0.08. See below.
+
+**Spots are drawn as 16-gons, not squares.** An HD bin really is a square; a Visium spot
+is round, and a square grid over a hex lattice misrepresents both the shape and the gaps
+between spots. 16 vertices is affordable here in a way it would not be on HD: a full
+capture area is 4,992 spots (~80K vertices) against HD's hundreds of thousands of bins.
+
+Detection requires *both* the scalefactors and a positions file, and is registered after
+Visium HD. HD's top-level `spatial/` holds images only, so the two cannot currently
+collide — ordering the more specific sentinel first means a future HD layout change
+cannot silently reroute HD datasets here.
+
+---
+
+## The Space Ranger coordinate contract (readers/spaceranger.py)
+
+Both 10x array platforms share a base class, because they agree on everything except
+layout, unit shape and where the pixel size comes from. **Read this before touching
+coordinates in either reader.**
+
+`pxl_col_in_fullres` / `pxl_row_in_fullres` are pixels in the **original
+full-resolution microscope image**, which Space Ranger does not ship. What it ships is
+`tissue_hires_image.png`, the same frame scaled by `tissue_hires_scalef`. TissuePlex
+builds its tile pyramid from that PNG and derives its whole coordinate space from it, so
+every coordinate the readers return is multiplied by that factor, and `pixel_size` reports
+µm per **hires** pixel.
+
+This was wrong for a release. `hires_scalef` was computed and reported in `info()` but
+never applied, while the module docstring claimed it was — invisible locally because the
+HD fixture has the factor set to exactly 1.0. On real HD data it displaces everything by
+1/scalef; on classic Visium, by about 12×. `sample_data/make_visium.py` therefore
+generates a factor of 0.08, and the fixture check is decisive: 252/252 spots land on the
+image with the multiply, 0/252 without it.
+
+Folding the factor into `pixel_size` matters beyond distance labels — `EdgeReader` divides
+the micron coordinates in `edges.parquet` by `pixel_size` to place edges, so a
+fullres-based value would scatter the connectivity layer off the tissue.
+
+**The caveat this leaves.** If a user drops their own full-resolution image into the
+dataset folder and selects it, coordinates will be wrong by the same factor, because the
+reader cannot know which image the viewer has open. Selecting `tissue_lowres_image` has
+the same problem. Fixing it properly means per-image transforms, which is what
+`spatialdata` does and what TissuePlex's single global image space does not model.
 
 ---
 
@@ -812,6 +1036,14 @@ Four things to know:
   uncached, so the golden baseline does not depend on whether a cache happens to exist.
 - **A failed build returns None and the query uses the source file**, so indexing can
   never make a dataset unreadable. `SPATIAL_CACHE=0` disables it entirely.
+- **The build runs in a background thread; queries use the unsorted file until it lands.**
+  It used to build inline, which made the first transcript request on a real dataset
+  unservable: sorting 132M rows takes ~94 s against nginx's 120 s `proxy_read_timeout`,
+  and before the memory fix below it was killed outright. Either way the hook saw a
+  non-ok response, returned `[]`, and the layer rendered empty — indistinguishable from
+  "this platform has no transcripts". `_resolved` is left *unset* while a build is in
+  flight, because it is the decided-forever cache: writing None into it would pin the
+  source to the unsorted file for the life of the process even after the index landed.
 - **Cache validity covers the sort columns, not just the source stamp.** The cache
   filename derives from the source stem alone, so without that check a file sorted on one
   column pair would be served for a query on another — sorted by the wrong axis, silently.
@@ -856,6 +1088,17 @@ synchronously from `visible_score_sum` in the already-fetched edges array. No se
 call is made for `lrm_set` mode. The p95 of `visible_score_sum` across the current
 viewport is auto-set as `edgeColorClamp.high` so the color range adapts to the data
 rather than being dominated by outlier edges.
+
+**Autocrine edges are colored on the same scale as directed edges.** They were once
+excluded from the `lrm_set` computation, which left the rings stuck on their default
+orange whatever the color control said — the one edge type that ignored "color by LRM
+set" — and they also skipped the `visible_lrm_count > 0` test, so hiding every
+mechanism removed the lines but left a ring on every cell. Both are fixed: the layer
+now derives from the same map and applies the same LRM filter. Sharing the scale is
+safe because autocrine `score_sum` medians run 1.00–1.33× the directed medians across
+the bundled datasets, so they neither dominate the range nor need one of their own.
+Metadata mode never had the problem, because `edge_color_values` groups over the whole
+parquet and so already covered autocrine rows.
 
 Categorical data uses `QUAL_PALETTE` (20 visually distinct colors) from `colormap.js`.
 Beyond 20 categories, `geneColor()` provides deterministic hash-based colors.
@@ -1016,6 +1259,21 @@ output folder under `DATA_PATH` — TissuePlex auto-detects the platform on firs
 Tuning knobs live in a `.env.prod` file that is gitignored and must be created by hand;
 `DUCKDB_MEMORY_LIMIT` is the one to reach for if the backend OOMs on large edge files.
 
+**`DUCKDB_MEMORY_LIMIT` must not have a fixed default, and this is a real failure mode.**
+It used to default to `8GB` in both compose files. On a stock Docker Desktop VM — 7.8 GB
+here — that authorises DuckDB to take all of RAM, so the spatial-index build over a real
+Xenium `transcripts.parquet` was killed by the *VM's* OOM killer mid-request, restarting
+uvicorn. The container memory limit does not catch this: compose declares 12 GB, which is
+larger than the VM, and `docker inspect` reports `OOMKilled=false` because the container
+limit was never reached. Only `RestartCount` climbing gives it away.
+
+`duck.py::_default_memory_limit()` now takes 60% of the **minimum** of the cgroup limit and
+physical RAM. Both numbers are needed — either can be the real ceiling and they routinely
+disagree. `connect()` also sets `temp_directory` (under `CACHE_DIR`, the one writable
+volume, since `/data` is mounted read-only): an in-memory DuckDB cannot spill without it,
+so a sort larger than the cap fails outright instead of going out-of-core. Spilling is
+what makes the 132M-row build possible at all rather than merely slower.
+
 Other env knobs: `SPATIAL_CACHE=0` disables the spatial index entirely,
 `SPATIAL_CACHE_MIN_BYTES` (default 64 MB) sets the size below which files are left alone,
 and `CACHE_DIR` relocates both the DZI pyramids and the spatial index off the data volume.
@@ -1026,7 +1284,7 @@ auth, no user accounts, and no per-dataset permissions.
 
 **Regression guard.** `backend/tests/golden_snapshot.py` exercises every reader method
 against all local datasets, digests the results, and diffs them against a recorded
-baseline (100 probes across 4 datasets). Run it after any reader change:
+baseline (238 probes across 8 datasets). Run it after any reader change:
 
 ```bash
 cd backend && python3 tests/golden_snapshot.py          # check
