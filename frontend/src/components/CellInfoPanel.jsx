@@ -10,7 +10,13 @@ const KEY = { color: "#666" };
 const VAL = { color: "#ccc", textAlign: "right", marginLeft: 8, wordBreak: "break-all" };
 
 export default function CellInfoPanel() {
-  const { apiBase, dataset, selectedCell, colorBy, cellColorEnabled, selectedGenes, platformCapabilities } = useStore();
+  const { apiBase, colorBy, cellColorEnabled, selectedGenes, selection } = useStore();
+  // Resolve against the panel that produced the click, not panel 0 — with two
+  // datasets on screen, panel 0's would be the wrong one half the time.
+  const selectedCell = selection?.kind === "cell" ? selection.cell : null;
+  const owner = useStore((s) => s.panels[selection?.panelIndex ?? 0]);
+  const dataset = owner?.dataset;
+  const platformCapabilities = owner?.platformCapabilities;
   const [detail, setDetail] = useState(null);
   const [loading, setLoading] = useState(false);
 

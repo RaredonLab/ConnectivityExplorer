@@ -23,9 +23,15 @@ services:
     environment:
       DATA_ROOT: /data
       CACHE_DIR: /cache
-      # DuckDB memory cap — prevents a large parquet scan from consuming all
-      # available RAM and making the container (and Docker Desktop VM) unresponsive.
-      DUCKDB_MEMORY_LIMIT: ${DUCKDB_MEMORY_LIMIT:-8GB}
+      # DuckDB memory cap. Leave unset to size it from the memory actually
+      # available (60% of the lesser of the cgroup limit and the host's RAM).
+      #
+      # Do not put a fixed default back here. It used to read `:-8GB`, which on a
+      # stock 8 GB Docker Desktop VM authorised DuckDB to take all of RAM: the
+      # spatial-index build over a 132M-row transcripts file was then killed by
+      # the VM's OOM killer mid-request, restarting the backend. The container
+      # limit below does not catch that — it is larger than the VM.
+      DUCKDB_MEMORY_LIMIT: ${DUCKDB_MEMORY_LIMIT:-}
       # Highest OME-TIFF level (in px) the tifffile builder loads whole. Only
       # matters for JPEG2000 OME-TIFFs (Xenium, seqFISH DAPI) that libvips can't
       # stream: the largest level within this limit becomes the deepest zoom.

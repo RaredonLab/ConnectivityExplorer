@@ -149,11 +149,33 @@ def transcripts(
     xmax: float = Query(None),
     ymax: float = Query(None),
     genes: list[str] = Query(None),
+    exclude_genes: list[str] = Query(None),
     fraction: float = Query(1.0),
 ):
     """Transcript records filtered by bounding box and/or gene list.
-    Returns {"transcripts": [...], "total": N} where total is the pre-sample count."""
-    return _reader(dataset).transcripts(
+
+    `genes` is an allowlist; `exclude_genes` is its complement, resolved here
+    against the dataset's gene list. Both express the same filter, and the client
+    sends whichever is shorter, because this is a GET and the list goes in the
+    URL: on a 480-gene panel "everything except one gene" is 7.8 KB of query
+    string, ~220 bytes under nginx's 8 KB request-line limit, and a 600-gene
+    panel 414s outright. Stated as an exclusion the same filter is one parameter.
+
+    Resolving here rather than in the readers keeps `SpatialDatasetReader` to a
+    single gene argument — six readers implement it and none of them need to know
+    the filter arrived inverted.
+
+    Returns {"transcripts": [...], "total": N} where total is the pre-sample count.
+    """
+    reader = _reader(dataset)
+    if exclude_genes:
+        excluded = set(exclude_genes)
+        remaining = [g for g in reader.gene_list() if g not in excluded]
+        # An empty allowlist and "no filter" are different things, and `genes=None`
+        # means the latter. Excluding every gene must therefore yield no rows, not
+        # all of them, so fall back to a sentinel that matches nothing.
+        genes = (genes or []) + remaining if genes else (remaining or ["\0"])
+    return reader.transcripts(
         bbox=(xmin, ymin, xmax, ymax) if xmin is not None else None,
         genes=genes,
         fraction=fraction,

@@ -470,9 +470,40 @@ The selection is built from `allGenes` (fetched once per dataset from
 - **Expanded picker**: full gene list (searchable) with checkboxes, `all` (→ null)
   and `none` (→ empty Set) buttons
 
-`toggleSelectedGene(gene)`: if `selectedGenes` is null, starts a new Set with just
-that gene. If it's a Set, toggles membership. Opening the picker while null shows all
-genes as checked; unchecking one starts an allowlist.
+`toggleSelectedGene(gene)` **must agree with what the checkbox is showing**, and this
+is the one thing to get right here. The picker renders `checked = selectedGenes === null
+|| selectedGenes.has(gene)`, so in the null state *every box is ticked*. A click therefore
+means **uncheck this one** — the action builds the allowlist "everything except this gene"
+from the union of `panels[*].allGenes`. Toggling the last unchecked gene back on collapses
+the Set to `null`, so "no filter" stays single-valued and hundreds of gene names stay out
+of the request URL.
+
+It used to start an allowlist containing *only* the clicked gene — the exact inverse. The
+symptom did not look like a filter bug: on a 480-gene Xenium panel one click took the
+transcript layer from 200,000 dots to ~360, which reads as "transcripts stopped working".
+Present since v0.2.0 (`c52dbc0`).
+
+**The filter is sent as an allowlist or as its complement, whichever is shorter**
+(`genes=` vs `exclude_genes=`). This is not an optimisation — it is what keeps the
+feature working at all. The list travels in the query string of a GET, and measured
+against this stack, 479 of 480 genes is a **7,780-byte URL, ~220 bytes under nginx's
+8 KB request-line limit**, while 600 genes returned **414**. Deselecting a handful of
+genes from a large panel is the ordinary case and produces exactly that shape, so a
+Xenium Prime 5K run would have failed on the first click. `exclude_genes` is resolved
+back to an allowlist in `spatial.py` against `reader.gene_list()`, so no reader sees
+the inverted form. `nginx.conf` also raises `large_client_header_buffers` to 64k, which
+covers the worst case the complement rule can still produce (half a panel).
+
+Note the two forms are equivalent to each other but **not** to sending no filter at all:
+`gene_list()` omits controls and blanks, so any explicit selection drops them while
+"no filter" keeps them (measured: 35,013 vs 34,997 rows in one viewport). That predates
+this change and is why the picker never lists control probes.
+
+An **empty** `selectedGenes` Set short-circuits the fetch. It means "show no species",
+but omitting the gene parameter means "no filter" to the backend, so the request used to
+return the full 200K-row cap for Viewer's client-side filter to discard — nothing drew,
+which looked right, while ~20 MB was fetched per pan and the layer badge reported the
+unfiltered total against an empty canvas.
 
 `useCellColors` `gene_set` mode: if `selectedGenes === null`, uses all `allGenes`;
 otherwise uses `[...selectedGenes]`.
@@ -525,6 +556,46 @@ Results set `selectedCell` or `selectedEdge` in the store.
   Reads `viewports[panelIndex]` from the store for its own viewport-bounded fetches.
 - **`Viewer`** (default export) — thin wrapper; renders `<ViewerPanel panelIndex={0} />`
   always, plus `<ViewerPanel panelIndex={1} />` when `panelCount >= 2`.
+
+**Two panels can now show two different datasets.** Everything bound to *which
+dataset a panel shows* lives in `panels[panelIndex]` (store.js `makePanel()`):
+`dataset`, `activeImage`, `imageSize`, `platformCapabilities`, `pixelSize`,
+`edgeFile`, `lrmCatalogue`, `allGenes`, the colour ranges, and the shown/total
+stats. Each of those differs between datasets, so none of them can be global.
+
+Style and choice settings — layer opacity, palettes, colour-by, filters, LRM
+selection, edge geometry — deliberately stay **shared**: one sidebar drives both
+panels, which is what makes a side-by-side comparison comparable. The sidebar
+reconciles across panels with `hooks/usePanels.js`, whose rule is **union, then
+degrade per panel**: offer a control if *either* panel can use it, and let the
+panel that cannot render nothing. Intersecting instead would hide controls that
+work perfectly well on one side, which is worse when the point is comparing
+unlike things. `unit_label` becomes the neutral "unit" when the panels disagree.
+
+Consequences worth knowing:
+
+- **The dataset / image / edge-source pickers move into each panel's header** in
+  split mode, because an image name or edge file only means something relative to
+  one dataset. In single-panel mode they stay in the sidebar, unchanged.
+- **Changing either panel's dataset resets the shared column-, gene- and
+  mechanism-named settings** (filters, colour-by field, gene allowlist, hidden
+  LRMs). It has to: a filter naming a column the new dataset lacks 400s on every
+  viewport change. The cost is that switching one panel clears the other's
+  filter. That goes away when these become per-panel.
+- **Selection carries its panel index** (`selection = {panelIndex, kind, …}`), so
+  `CellInfoPanel` / `EdgeInfoPanel` and region export resolve against the dataset
+  that was actually clicked. `EdgeInfoPanel` used to be pinned to panel 0.
+- **⇔ Match zoom matches physical scale, not fraction of image.** It used to
+  divide both viewports by the local image width, i.e. match "the same proportion
+  of the picture" — identical behaviour when both panels showed one dataset, and
+  meaningless across two. 20% of a 6.5 mm Visium capture area and 20% of a 55 µm
+  seqFISH ROI differ by 55×. It now converts through each panel's own `pixelSize`
+  so the same number of microns spans the same screen width, exactly as a
+  scalebar would. Verified across Visium↔seqFISH: 2997 µm vs 55 µm → 55 µm both.
+- **`linkColorScale` (default on) shares one colour range across panels.** This
+  is figure integrity, not preference: two viridis panels that each auto-ranged
+  to their own data look comparable and are not — one's yellow might be 40 counts
+  and the other's 4,000. An explicit clamp from the sliders always wins.
 
 **What is per-panel (local state / per-instance):**
 - OSD viewer instance (`viewerRef`)
@@ -965,6 +1036,14 @@ Four things to know:
   uncached, so the golden baseline does not depend on whether a cache happens to exist.
 - **A failed build returns None and the query uses the source file**, so indexing can
   never make a dataset unreadable. `SPATIAL_CACHE=0` disables it entirely.
+- **The build runs in a background thread; queries use the unsorted file until it lands.**
+  It used to build inline, which made the first transcript request on a real dataset
+  unservable: sorting 132M rows takes ~94 s against nginx's 120 s `proxy_read_timeout`,
+  and before the memory fix below it was killed outright. Either way the hook saw a
+  non-ok response, returned `[]`, and the layer rendered empty — indistinguishable from
+  "this platform has no transcripts". `_resolved` is left *unset* while a build is in
+  flight, because it is the decided-forever cache: writing None into it would pin the
+  source to the unsorted file for the life of the process even after the index landed.
 - **Cache validity covers the sort columns, not just the source stamp.** The cache
   filename derives from the source stem alone, so without that check a file sorted on one
   column pair would be served for a query on another — sorted by the wrong axis, silently.
@@ -1179,6 +1258,21 @@ output folder under `DATA_PATH` — TissuePlex auto-detects the platform on firs
 `Caddyfile` (reverse proxy + automatic TLS), and `upload-data.sh` (rsync datasets up).
 Tuning knobs live in a `.env.prod` file that is gitignored and must be created by hand;
 `DUCKDB_MEMORY_LIMIT` is the one to reach for if the backend OOMs on large edge files.
+
+**`DUCKDB_MEMORY_LIMIT` must not have a fixed default, and this is a real failure mode.**
+It used to default to `8GB` in both compose files. On a stock Docker Desktop VM — 7.8 GB
+here — that authorises DuckDB to take all of RAM, so the spatial-index build over a real
+Xenium `transcripts.parquet` was killed by the *VM's* OOM killer mid-request, restarting
+uvicorn. The container memory limit does not catch this: compose declares 12 GB, which is
+larger than the VM, and `docker inspect` reports `OOMKilled=false` because the container
+limit was never reached. Only `RestartCount` climbing gives it away.
+
+`duck.py::_default_memory_limit()` now takes 60% of the **minimum** of the cgroup limit and
+physical RAM. Both numbers are needed — either can be the real ceiling and they routinely
+disagree. `connect()` also sets `temp_directory` (under `CACHE_DIR`, the one writable
+volume, since `/data` is mounted read-only): an in-memory DuckDB cannot spill without it,
+so a sort larger than the cap fails outright instead of going out-of-core. Spilling is
+what makes the 132M-row build possible at all rather than merely slower.
 
 Other env knobs: `SPATIAL_CACHE=0` disables the spatial index entirely,
 `SPATIAL_CACHE_MIN_BYTES` (default 64 MB) sets the size below which files are left alone,

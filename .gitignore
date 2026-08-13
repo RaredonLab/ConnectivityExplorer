@@ -61,3 +61,7 @@ backend/.dzi_cache/
 .env.prod
 .claude/
 
+
+# macOS Finder metadata — created in every directory browsed in Finder.
+# Pattern is unanchored so it matches at any depth, not just the repo root.
+.DS_Store

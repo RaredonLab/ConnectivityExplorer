@@ -902,16 +902,18 @@
       "has_transcripts": true,
       "unit_label": "cell"
     },
-    "cell_detail_0": "178c5b055b70bf72",
+    "cell_detail_0": "13ac6752da0385d8",
     "cell_expression_0": {
       "digest": "cb42bde899c5553c",
       "n": 12
     },
     "cells_all": {
-      "digest": "20ddf74e79b6dafb",
+      "digest": "f8ae7e72333ece28",
       "keys": [
         "cell_area",
         "cell_id",
+        "total_counts",
+        "transcript_counts",
         "x_centroid",
         "y_centroid"
       ],
@@ -920,6 +922,8 @@
     "cells_schema": {
       "columns": {
         "cell_area": "float64",
+        "total_counts": "int64",
+        "transcript_counts": "int64",
         "x_centroid": "float64",
         "y_centroid": "float64"
       }
@@ -1109,16 +1113,18 @@
       "has_transcripts": true,
       "unit_label": "cell"
     },
-    "cell_detail_0": "25ca1be475fb76eb",
+    "cell_detail_0": "6ad6a7c9da8b7d49",
     "cell_expression_0": {
       "digest": "a21358674d54a7f2",
       "n": 36
     },
     "cells_all": {
-      "digest": "3041ba131e9fb3b6",
+      "digest": "df0f5788b866d302",
       "keys": [
         "cell_area",
         "cell_id",
+        "total_counts",
+        "transcript_counts",
         "x_centroid",
         "y_centroid"
       ],
@@ -1127,6 +1133,8 @@
     "cells_schema": {
       "columns": {
         "cell_area": "float64",
+        "total_counts": "int64",
+        "transcript_counts": "int64",
         "x_centroid": "float64",
         "y_centroid": "float64"
       }

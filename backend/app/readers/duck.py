@@ -12,13 +12,87 @@ and boundary panning slow on full-size datasets.
 """
 import math
 import os
+import tempfile
 from pathlib import Path
+from typing import Optional
 
 import duckdb
 import pyarrow.parquet as pq
 
-_MEMORY_LIMIT = os.getenv("DUCKDB_MEMORY_LIMIT", "8GB")
+def _available_memory_bytes() -> Optional[int]:
+    """Memory this process may actually use, or None if it cannot be determined.
+
+    Takes the **minimum** of the cgroup limit and physical RAM, because either
+    can be the real ceiling and they routinely disagree. On Docker Desktop the
+    container limit is whatever compose declares (12 GB here) while the Linux VM
+    hosting it may have far less (7.8 GB) — trusting the cgroup alone invites the
+    VM's OOM killer, which kills the process without the container ever reporting
+    OOMKilled.
+    """
+    limits = []
+    for p in ("/sys/fs/cgroup/memory.max",                    # cgroup v2
+              "/sys/fs/cgroup/memory/memory.limit_in_bytes"):  # cgroup v1
+        try:
+            raw = Path(p).read_text().strip()
+            if raw and raw != "max":
+                v = int(raw)
+                # v1 reports a sentinel near 2^63 to mean "unlimited".
+                if 0 < v < (1 << 62):
+                    limits.append(v)
+        except (OSError, ValueError):
+            pass
+    try:
+        limits.append(os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES"))
+    except (OSError, ValueError, AttributeError):
+        pass
+    return min(limits) if limits else None
+
+
+def _default_memory_limit() -> str:
+    """A memory cap that leaves room for everything else in the process.
+
+    The old default was a flat ``8GB`` regardless of the machine. That is not a
+    cap at all on a standard 8 GB Docker Desktop VM — it authorises DuckDB to
+    take essentially all of RAM, and a large sort then dies to the OOM killer
+    mid-request, taking uvicorn with it. Sizing from what is actually present
+    keeps the same intent (bound the scan) while making the bound real.
+
+    60% leaves headroom for the Python process, pyvips tile builds, and the
+    page cache the parquet scan itself depends on.
+    """
+    total = _available_memory_bytes()
+    if not total:
+        return "4GB"                       # unknowable → conservative, not greedy
+    mb = max(1024, int(total * 0.60 / (1024 * 1024)))
+    return f"{mb}MB"
+
+
+_MEMORY_LIMIT = os.getenv("DUCKDB_MEMORY_LIMIT") or _default_memory_limit()
 _THREADS = os.getenv("DUCKDB_THREADS", "4")
+
+
+def _temp_dir() -> Optional[str]:
+    """Writable scratch directory for DuckDB to spill to, or None.
+
+    Without this an in-memory DuckDB cannot spill, so any operation whose working
+    set exceeds ``memory_limit`` fails outright instead of going out-of-core. The
+    spatial-index build sorts the entire transcripts file, which on a real Xenium
+    run is 132M rows — far past any sane cap — so spilling is what makes that
+    build possible at all rather than merely slower.
+
+    CACHE_DIR is the right home: it is the one writable volume the backend owns
+    (/data is mounted read-only), and it already holds derived artifacts.
+    """
+    base = os.getenv("CACHE_DIR") or tempfile.gettempdir()
+    try:
+        d = Path(base) / "duckdb-tmp"
+        d.mkdir(parents=True, exist_ok=True)
+        return str(d)
+    except OSError:
+        return None
+
+
+_TEMP_DIR = _temp_dir()
 
 
 def connect() -> duckdb.DuckDBPyConnection:
@@ -31,6 +105,8 @@ def connect() -> duckdb.DuckDBPyConnection:
     conn = duckdb.connect()
     conn.execute(f"SET memory_limit='{_MEMORY_LIMIT}'")
     conn.execute(f"SET threads={_THREADS}")
+    if _TEMP_DIR:
+        conn.execute(f"SET temp_directory='{_TEMP_DIR}'")
     return conn
 
 
