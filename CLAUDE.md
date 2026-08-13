@@ -1014,6 +1014,14 @@ Four things to know:
   uncached, so the golden baseline does not depend on whether a cache happens to exist.
 - **A failed build returns None and the query uses the source file**, so indexing can
   never make a dataset unreadable. `SPATIAL_CACHE=0` disables it entirely.
+- **The build runs in a background thread; queries use the unsorted file until it lands.**
+  It used to build inline, which made the first transcript request on a real dataset
+  unservable: sorting 132M rows takes ~94 s against nginx's 120 s `proxy_read_timeout`,
+  and before the memory fix below it was killed outright. Either way the hook saw a
+  non-ok response, returned `[]`, and the layer rendered empty — indistinguishable from
+  "this platform has no transcripts". `_resolved` is left *unset* while a build is in
+  flight, because it is the decided-forever cache: writing None into it would pin the
+  source to the unsorted file for the life of the process even after the index landed.
 - **Cache validity covers the sort columns, not just the source stamp.** The cache
   filename derives from the source stem alone, so without that check a file sorted on one
   column pair would be served for a query on another — sorted by the wrong axis, silently.
@@ -1228,6 +1236,21 @@ output folder under `DATA_PATH` — TissuePlex auto-detects the platform on firs
 `Caddyfile` (reverse proxy + automatic TLS), and `upload-data.sh` (rsync datasets up).
 Tuning knobs live in a `.env.prod` file that is gitignored and must be created by hand;
 `DUCKDB_MEMORY_LIMIT` is the one to reach for if the backend OOMs on large edge files.
+
+**`DUCKDB_MEMORY_LIMIT` must not have a fixed default, and this is a real failure mode.**
+It used to default to `8GB` in both compose files. On a stock Docker Desktop VM — 7.8 GB
+here — that authorises DuckDB to take all of RAM, so the spatial-index build over a real
+Xenium `transcripts.parquet` was killed by the *VM's* OOM killer mid-request, restarting
+uvicorn. The container memory limit does not catch this: compose declares 12 GB, which is
+larger than the VM, and `docker inspect` reports `OOMKilled=false` because the container
+limit was never reached. Only `RestartCount` climbing gives it away.
+
+`duck.py::_default_memory_limit()` now takes 60% of the **minimum** of the cgroup limit and
+physical RAM. Both numbers are needed — either can be the real ceiling and they routinely
+disagree. `connect()` also sets `temp_directory` (under `CACHE_DIR`, the one writable
+volume, since `/data` is mounted read-only): an in-memory DuckDB cannot spill without it,
+so a sort larger than the cap fails outright instead of going out-of-core. Spilling is
+what makes the 132M-row build possible at all rather than merely slower.
 
 Other env knobs: `SPATIAL_CACHE=0` disables the spatial index entirely,
 `SPATIAL_CACHE_MIN_BYTES` (default 64 MB) sets the size below which files are left alone,

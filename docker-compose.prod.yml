@@ -37,7 +37,9 @@ services:
     environment:
       DATA_ROOT: /data
       CACHE_DIR: /cache
-      DUCKDB_MEMORY_LIMIT: ${DUCKDB_MEMORY_LIMIT:-8GB}
+      # Unset → sized from available memory. See docker-compose.yml for why a
+      # fixed default is unsafe. Override in .env.prod if you need a tighter cap.
+      DUCKDB_MEMORY_LIMIT: ${DUCKDB_MEMORY_LIMIT:-}
     restart: unless-stopped
     stop_grace_period: 5m
     deploy:
