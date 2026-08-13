@@ -372,12 +372,31 @@ export const useStore = create((set, get) => ({
   setSelectedGenes: (genes) => set({ selectedGenes: genes }),
   toggleSelectedGene: (gene) =>
     set((s) => {
+      // The universe of genes is the union across the visible panels — the same
+      // list the picker renders.
+      const all = [...new Set(
+        s.panels.slice(0, s.panelCount).flatMap((p) => p.allGenes ?? [])
+      )];
+
       if (s.selectedGenes === null) {
-        // First selection from "show all" state: start an allowlist with just this gene.
-        return { selectedGenes: new Set([gene]) };
+        // "Show all" renders EVERY checkbox ticked, so a click here means
+        // "uncheck this one" — exclude it and keep the rest.
+        //
+        // This used to start an allowlist containing only the clicked gene, the
+        // exact opposite of what the click meant. On a 480-gene Xenium panel
+        // that silently narrowed the transcript layer from 200,000 dots to ~360,
+        // which reads as "transcripts are broken" rather than "you filtered to
+        // one gene". The checkbox said checked; the click has to mean uncheck.
+        if (all.length === 0) return {};          // list not loaded yet — ignore
+        return { selectedGenes: new Set(all.filter((g) => g !== gene)) };
       }
+
       const next = new Set(s.selectedGenes);
       if (next.has(gene)) next.delete(gene); else next.add(gene);
+      // Back to everything selected is the same as no filter. Collapsing keeps
+      // the semantics single-valued and keeps hundreds of gene names out of the
+      // request URL.
+      if (all.length > 0 && next.size === all.length) return { selectedGenes: null };
       return { selectedGenes: next };
     }),
 }));

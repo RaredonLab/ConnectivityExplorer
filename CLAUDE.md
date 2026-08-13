@@ -470,9 +470,18 @@ The selection is built from `allGenes` (fetched once per dataset from
 - **Expanded picker**: full gene list (searchable) with checkboxes, `all` (→ null)
   and `none` (→ empty Set) buttons
 
-`toggleSelectedGene(gene)`: if `selectedGenes` is null, starts a new Set with just
-that gene. If it's a Set, toggles membership. Opening the picker while null shows all
-genes as checked; unchecking one starts an allowlist.
+`toggleSelectedGene(gene)` **must agree with what the checkbox is showing**, and this
+is the one thing to get right here. The picker renders `checked = selectedGenes === null
+|| selectedGenes.has(gene)`, so in the null state *every box is ticked*. A click therefore
+means **uncheck this one** — the action builds the allowlist "everything except this gene"
+from the union of `panels[*].allGenes`. Toggling the last unchecked gene back on collapses
+the Set to `null`, so "no filter" stays single-valued and hundreds of gene names stay out
+of the request URL.
+
+It used to start an allowlist containing *only* the clicked gene — the exact inverse. The
+symptom did not look like a filter bug: on a 480-gene Xenium panel one click took the
+transcript layer from 200,000 dots to ~360, which reads as "transcripts stopped working".
+Present since v0.2.0 (`c52dbc0`).
 
 `useCellColors` `gene_set` mode: if `selectedGenes === null`, uses all `allGenes`;
 otherwise uses `[...selectedGenes]`.
