@@ -109,7 +109,13 @@ def sorted_path(
     if not ENABLED or not source.exists():
         return None
 
-    key = str(source.resolve())
+    # Keyed on the sort columns as well as the path. The manifest check below
+    # already refuses a cache sorted on a different column pair, but this memo
+    # sits in front of it and would hand back that exact file on every later
+    # call — defeating the check written to prevent it. Not reachable today
+    # (each source is queried with one fixed column pair) but silent if it ever
+    # were: the data would be right and the row-group pruning wrong.
+    key = f"{source.resolve()}::{x_col}::{y_col}"
     if key in _resolved:
         return _resolved[key]
 
@@ -194,9 +200,12 @@ def _start_background_build(
             # just failed on every subsequent viewport change would turn one bad
             # file into a rebuild storm.
             _resolved[key] = built
-        except Exception as exc:  # _build catches its own, but never let a
-            print(f"[spatial_cache] background build for {source.name} "
-                  f"failed: {exc}")  # thread die silently
+        except Exception as exc:
+            # _build already swallows its own errors, so reaching here means
+            # something unexpected. Catch it anyway: an exception escaping a
+            # thread is printed to stderr and then lost, leaving the key stuck
+            # in _building so no later request would ever retry the build.
+            print(f"[spatial_cache] background build for {source.name} failed: {exc}")
             _resolved[key] = None
         finally:
             with _locks_guard:

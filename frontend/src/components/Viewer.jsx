@@ -583,7 +583,7 @@ function ViewerPanel({ panelIndex }) {
   const hasBoundaries = platformCapabilities?.has_boundaries ?? true;
 
   const { transcripts, total: transcriptTotal, loading: transcriptsLoading } = useTranscripts(
-    apiBase, dataset, viewport, imageSize, transcriptsVisible && hasTranscripts, transcriptFraction, selectedGenes
+    apiBase, dataset, viewport, imageSize, transcriptsVisible && hasTranscripts, transcriptFraction, selectedGenes, allGenes
   );
 
   // visibleTranscripts: server already filtered by selectedGenes, so this is a no-op

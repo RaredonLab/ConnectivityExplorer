@@ -483,6 +483,28 @@ symptom did not look like a filter bug: on a 480-gene Xenium panel one click too
 transcript layer from 200,000 dots to ~360, which reads as "transcripts stopped working".
 Present since v0.2.0 (`c52dbc0`).
 
+**The filter is sent as an allowlist or as its complement, whichever is shorter**
+(`genes=` vs `exclude_genes=`). This is not an optimisation — it is what keeps the
+feature working at all. The list travels in the query string of a GET, and measured
+against this stack, 479 of 480 genes is a **7,780-byte URL, ~220 bytes under nginx's
+8 KB request-line limit**, while 600 genes returned **414**. Deselecting a handful of
+genes from a large panel is the ordinary case and produces exactly that shape, so a
+Xenium Prime 5K run would have failed on the first click. `exclude_genes` is resolved
+back to an allowlist in `spatial.py` against `reader.gene_list()`, so no reader sees
+the inverted form. `nginx.conf` also raises `large_client_header_buffers` to 64k, which
+covers the worst case the complement rule can still produce (half a panel).
+
+Note the two forms are equivalent to each other but **not** to sending no filter at all:
+`gene_list()` omits controls and blanks, so any explicit selection drops them while
+"no filter" keeps them (measured: 35,013 vs 34,997 rows in one viewport). That predates
+this change and is why the picker never lists control probes.
+
+An **empty** `selectedGenes` Set short-circuits the fetch. It means "show no species",
+but omitting the gene parameter means "no filter" to the backend, so the request used to
+return the full 200K-row cap for Viewer's client-side filter to discard — nothing drew,
+which looked right, while ~20 MB was fetched per pan and the layer badge reported the
+unfiltered total against an empty canvas.
+
 `useCellColors` `gene_set` mode: if `selectedGenes === null`, uses all `allGenes`;
 otherwise uses `[...selectedGenes]`.
 
