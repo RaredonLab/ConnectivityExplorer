@@ -138,6 +138,116 @@ def get_tile_path(
     return tile if tile.exists() else None
 
 
+# Deepest-level base image held for on-demand tile synthesis, keyed by tiles_root.
+# One at a time — each is tens of MB — so switching image releases the previous.
+_SYNTH_BASE: dict[str, "Image.Image"] = {}
+
+
+def _synth_base(tiles_root: Path, deepest: int, deep_w: int, deep_h: int):
+    """Stitch the deepest built DZI level into a single Pillow image, cached.
+
+    Built from the already-written JPEG tiles (no OME re-decode), so it inherits
+    the same normalisation as the rest of the pyramid.
+    """
+    key = f"{tiles_root}#{deepest}"
+    cached = _SYNTH_BASE.get(key)
+    if cached is not None:
+        return cached
+    level_dir = tiles_root / str(deepest)
+    if not level_dir.is_dir():
+        return None
+    base = Image.new("L", (deep_w, deep_h))
+    for f in level_dir.glob(f"*.{TILE_FORMAT}"):
+        try:
+            c, r = (int(v) for v in f.stem.split("_"))
+        except ValueError:
+            continue
+        x0 = max(0, c * TILE_SIZE - (OVERLAP if c > 0 else 0))
+        y0 = max(0, r * TILE_SIZE - (OVERLAP if r > 0 else 0))
+        with Image.open(f) as t:
+            base.paste(t.convert("L"), (x0, y0))
+    _SYNTH_BASE.clear()          # bound memory to a single base image
+    _SYNTH_BASE[key] = base
+    return base
+
+
+def get_or_synth_tile(
+    dataset_path: Path, image_name: str, level: int, col: int, row: int, fmt: str
+) -> Optional[Path]:
+    """Return a tile path, synthesising it when the requested level is above what
+    was built.
+
+    Large JPEG2000 OME-TIFFs are only built down to the deepest level that fits
+    MAX_TIFFFILE_DIM; the descriptor still advertises native size (so overlays
+    align), so a client will request deeper levels that were never written. Rather
+    than 404 (which renders black), upscale the deepest built level for that tile.
+    Returns None when there is nothing to synthesise from (genuinely absent tile).
+    """
+    existing = get_tile_path(dataset_path, image_name, level, col, row, fmt)
+    if existing is not None:
+        return existing
+    if image_name == BLANK_IMAGE_NAME:
+        return None
+
+    tiles_root = _pyramid_root(dataset_path, image_name) / f"{image_name}_files"
+    if not tiles_root.is_dir():
+        return None
+    built = sorted(int(d.name) for d in tiles_root.iterdir()
+                   if d.is_dir() and d.name.isdigit())
+    if not built:
+        return None
+    deepest = built[-1]
+    if level <= deepest:
+        return None  # absent within the built range — not an upscale case
+
+    try:
+        d = get_dzi_descriptor(dataset_path, image_name)
+    except FileNotFoundError:
+        return None
+    full_w, full_h = d["Size"]["Width"], d["Size"]["Height"]
+    max_dzi_level = math.ceil(math.log2(max(full_w, full_h)))
+    if level > max_dzi_level:
+        return None
+
+    def _dims(lvl: int) -> tuple[int, int]:
+        return (max(1, math.ceil(full_w / 2 ** (max_dzi_level - lvl))),
+                max(1, math.ceil(full_h / 2 ** (max_dzi_level - lvl))))
+
+    level_w, level_h = _dims(level)
+    deep_w, deep_h = _dims(deepest)
+
+    base = _synth_base(tiles_root, deepest, deep_w, deep_h)
+    if base is None:
+        return None
+
+    # Target tile bounds in this level's pixel space — identical geometry to the
+    # builder, so a synthesised tile lines up with real ones at the boundary.
+    x0 = col * TILE_SIZE - (OVERLAP if col > 0 else 0)
+    y0 = row * TILE_SIZE - (OVERLAP if row > 0 else 0)
+    x1 = min(x0 + TILE_SIZE + OVERLAP * 2, level_w)
+    y1 = min(y0 + TILE_SIZE + OVERLAP * 2, level_h)
+    x0 = max(x0, 0)
+    y0 = max(y0, 0)
+    if x1 <= x0 or y1 <= y0:
+        return None
+
+    # Map to deepest-level coordinates, crop, and upscale to the tile's size.
+    sx, sy = deep_w / level_w, deep_h / level_h
+    bx0, by0 = int(math.floor(x0 * sx)), int(math.floor(y0 * sy))
+    bx1 = min(deep_w, max(bx0 + 1, int(math.ceil(x1 * sx))))
+    by1 = min(deep_h, max(by0 + 1, int(math.ceil(y1 * sy))))
+    crop = base.crop((bx0, by0, bx1, by1)).resize((x1 - x0, y1 - y0), Image.BILINEAR)
+
+    level_dir = tiles_root / str(level)
+    level_dir.mkdir(parents=True, exist_ok=True)
+    out_path = level_dir / f"{col}_{row}.{fmt}"
+    try:
+        crop.save(out_path, quality=JPEG_QUALITY)
+    except Exception:
+        return None
+    return out_path
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Build dispatcher
 # ──────────────────────────────────────────────────────────────────────────────
@@ -151,8 +261,15 @@ def _build_dzi(src: Path, out_dir: Path, image_name: str) -> None:
         pyvips_started = True
         _build_dzi_pyvips(src, out_dir, image_name)
         return
-    except Exception:
+    except Exception as exc:
         # pyvips not installed, libvips missing, or can't process this file.
+        # Log the reason: this was silent before, which hid real failures such
+        # as JPEG2000-in-TIFF (compression tag 34712) that libvips cannot decode
+        # via libtiff even when built with OpenJPEG — the tifffile+imagecodecs
+        # fallback is what actually handles those files.
+        print(f"[pyramid] pyvips could not build {src.name} "
+              f"({'processing error' if pyvips_started else 'unavailable'}): "
+              f"{type(exc).__name__}: {exc} — falling back to tifffile/Pillow")
         # Clean up any partial output before falling back.
         if pyvips_started:
             for item in list(out_dir.iterdir()):
@@ -246,50 +363,55 @@ def _build_dzi_pyvips(src: Path, out_dir: Path, image_name: str) -> None:
 # Backend 2 — tifffile + Pillow (pure Python fallback)
 # ──────────────────────────────────────────────────────────────────────────────
 
+# Pixels; OME levels wider/taller than this are not loaded whole (a uint16 level
+# at this size is ~0.5 GB, and normalisation transiently needs a few× that). The
+# descriptor is always written at NATIVE size so overlay coordinates (which the
+# readers emit as µm / pixel_size, i.e. native pixels) stay aligned with the
+# tiles. Levels whose OME source exceeds this cap are simply left unbuilt and
+# synthesised on demand by upscaling the deepest built level (get_or_synth_tile).
+# Raise it (env override) on a box with spare RAM to build sharper top levels.
+MAX_TIFFFILE_DIM = int(os.getenv("MAX_TIFFFILE_DIM", "16384"))
+
+
 def _build_dzi_tifffile(src: Path, out_dir: Path, image_name: str) -> None:
     """
     Build DZI from OME-TIFF using tifffile + Pillow.
 
-    Reads one OME pyramid level at a time (rather than all at once) to keep
-    peak memory usage bounded.  For images wider than MAX_TIFFFILE_DIM the
-    smallest OME level that fits within the limit is used as the top DZI level,
-    which is sufficient for laboratory-scale Xenium data.
+    Reads one OME pyramid level at a time (rather than all at once) to keep peak
+    memory usage bounded. The descriptor is written at the image's NATIVE size so
+    that cell/edge/transcript coordinates — which the readers emit in native pixel
+    space (µm / pixel_size) — line up with the tiles. OME levels wider than
+    MAX_TIFFFILE_DIM are too large to load whole, so the corresponding top DZI
+    levels are left unbuilt and produced on demand by upscaling the deepest built
+    level (see get_or_synth_tile). That keeps the image at native size while
+    bounding both build time and peak memory.
     """
     import tifffile
-
-    MAX_TIFFFILE_DIM = 16384  # pixels; skip OME levels larger than this
 
     with tifffile.TiffFile(src) as tif:
         series = tif.series[0]
         ax = series.axes.upper()
-        n_levels = len(series.levels)
 
-        full_shape = series.levels[0].shape
-        if ax.startswith(("Z", "C")):
-            full_h, full_w = full_shape[-2], full_shape[-1]
-        else:
-            full_h, full_w = full_shape[0], full_shape[1]
+        native_shape = series.levels[0].shape
+        full_w, full_h = native_shape[-1], native_shape[-2]
 
         # Compute normalization from the smallest OME level
         lo, hi = _tiff_norm_stats(series, ax)
 
         max_dzi_level = math.ceil(math.log2(max(full_w, full_h)))
         tiles_root = out_dir / f"{image_name}_files"
+        deepest_built = -1
 
         for dzi_level in range(max_dzi_level + 1):
             level_w = max(1, math.ceil(full_w / 2 ** (max_dzi_level - dzi_level)))
             level_h = max(1, math.ceil(full_h / 2 ** (max_dzi_level - dzi_level)))
 
-            # Pick smallest OME level >= target, but skip if still too large
             ome_idx = _pick_ome_level_idx(series, ax, full_w, full_h, level_w, level_h)
             ome_lvl = series.levels[ome_idx]
-            ome_shape = ome_lvl.shape
-            ome_w = ome_shape[-1]
-            ome_h = ome_shape[-2]
-
-            if max(ome_w, ome_h) > MAX_TIFFFILE_DIM:
-                # This OME level is too large to load safely; skip — lower DZI
-                # levels will be generated from smaller OME levels.
+            if max(ome_lvl.shape[-1], ome_lvl.shape[-2]) > MAX_TIFFFILE_DIM:
+                # Too large to load whole. Leave unbuilt — served on demand by
+                # upscaling the deepest built level, which keeps the image at
+                # native size so overlay coordinates stay aligned.
                 continue
 
             arr = _read_ome_level_arr(ome_lvl, ax)
@@ -320,6 +442,13 @@ def _build_dzi_tifffile(src: Path, out_dir: Path, image_name: str) -> None:
                     tile.save(level_dir / f"{col}_{row}.{TILE_FORMAT}", quality=JPEG_QUALITY)
 
             del pil_img
+            deepest_built = dzi_level
+
+    if deepest_built < max_dzi_level:
+        print(f"[pyramid] {src.name}: native {full_w}x{full_h}; DZI levels above "
+              f"{deepest_built} exceed MAX_TIFFFILE_DIM={MAX_TIFFFILE_DIM} and are "
+              f"upscaled on demand. Raise MAX_TIFFFILE_DIM (more RAM) for sharper "
+              f"top levels.")
 
     _write_dzi_xml(out_dir, image_name, full_w, full_h)
 
