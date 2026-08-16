@@ -152,11 +152,24 @@ change must reset the name-bound settings *only*, since rebuilding the panel fro
 `makePanel()` would also have wiped geometry, palettes and layer visibility,
 which a dataset change never touched.
 
-**2b — sidebar tabs and the link toggle.** Add `activePanel` and
-`linkSettings: true`. `usePanelIndex` already falls back to `s.activePanel ?? 0`,
-so introducing the key is enough to make the sidebar follow the active tab. `setSetting` writes to all panels when linked, to
-`activePanel` when not. Tabs render only when `panelCount === 2`. Single-panel
-mode gets no tabs and writes to panel 0, so it is untouched.
+**2b — sidebar tabs and the link toggle. DONE.** `activePanel` and
+`linkSettings: true` are in the store. `patchSettings` writes to all panels when
+linked and to `activePanel` when not; `getSetting` reads the active panel, which
+read-modify-write setters depend on — unlinked, `toggleLrm` must toggle against
+the panel it is about to write, not panel 0. `PanelTabs` renders only when
+`panelCount === 2`, so single-panel mode is untouched.
+
+Two decisions worth knowing:
+
+- **Re-linking adopts the active panel's settings** rather than merely resuming
+  propagation. The alternative leaves a control labelled "linked" over two
+  visibly different panels, converging them only partially on the next edit.
+  Which panel wins is the tab you are on, so it is chosen rather than
+  incidental. `cloneSettings` deep-copies the containers; a shallow copy would
+  leave the panels aliasing, so the next unlinked edit would write to both.
+- **`CellInfoPanel` reads the *clicked* panel's settings**, not the active tab's.
+  Identical while linked; unlinked, the active panel's gene selection would
+  describe the wrong cell.
 
 **2c — push settings.** `pushSettings(from, to)` deep-copies
 `panels[from].settings` into `panels[to]`. One button per panel header, labelled
@@ -165,10 +178,12 @@ target dataset does not have must be dropped rather than copied, or the target
 panel starts 400ing on every viewport change — the same failure mode as
 problem 1. Validate against the target's schema/gene list before writing.
 
-**2d — narrow the dataset-change reset.** With settings per-panel,
-`setPanelDataset(i, …)` resets only `panels[i].settings`. This is the payoff for
-problem 1 and is a two-line change once 2a has landed — but only correct after
-2a, which is why it is last rather than first.
+**2d — narrow the dataset-change reset. DONE, folded into 2b.** Sequencing it
+last turned out to be wrong. 2b makes the promise "editing panel 1 only", and a
+global reset breaks it: an action on panel 2 still destroys panel 1's work, so
+2b alone would ship a control that lies. The panel whose dataset — or edge file
+— changed is always reset; the others only while linked, where they share one
+set of values and a stale filter would 400 on every viewport change.
 
 **2e — docs.** CLAUDE.md's Split-Screen section, and `docs/index.html` (the
 hosted manual) for the tabs, the link toggle and the push button.

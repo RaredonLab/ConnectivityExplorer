@@ -569,10 +569,11 @@ dataset a panel shows* lives in `panels[panelIndex]` (store.js `makePanel()`):
 stats. Each of those differs between datasets, so none of them can be global.
 
 Style and choice settings — layer opacity, palettes, colour-by, filters, LRM
-selection, edge geometry — deliberately stay **shared**: one sidebar drives both
-panels, which is what makes a side-by-side comparison comparable. Making those
-per-panel, with a link toggle and a push-to-other-panel button, is Phase 2 —
-specified in `docs/split_screen_phase2.md`, not yet started. The sidebar
+selection, edge geometry — are **shared by default** and can be unlinked per
+panel from the sidebar tabs (Phase 2a/2b). One sidebar driving both panels is
+what makes a side-by-side comparison comparable, so linked stays the default.
+See `docs/split_screen_phase2.md`; the remaining stage is 2c, an explicit
+push-settings-to-the-other-panel button. The sidebar
 reconciles across panels with `hooks/usePanels.js`, whose rule is **union, then
 degrade per panel**: offer a control if *either* panel can use it, and let the
 panel that cannot render nothing. Intersecting instead would hide controls that
@@ -584,11 +585,10 @@ Consequences worth knowing:
 - **The dataset / image / edge-source pickers move into each panel's header** in
   split mode, because an image name or edge file only means something relative to
   one dataset. In single-panel mode they stay in the sidebar, unchanged.
-- **Changing either panel's dataset resets the shared column-, gene- and
-  mechanism-named settings** (filters, colour-by field, gene allowlist, hidden
-  LRMs). It has to: a filter naming a column the new dataset lacks 400s on every
-  viewport change. The cost is that switching one panel clears the other's
-  filter. That goes away when these become per-panel.
+- **Changing a panel's dataset resets its column-, gene- and mechanism-named
+  settings** (filters, colour-by field, gene allowlist, hidden LRMs). It has to:
+  a filter naming a column the new dataset lacks 400s on every viewport change.
+  The other panel is reset too only while `linkSettings` is on.
 - **Selection carries its panel index** (`selection = {panelIndex, kind, …}`), so
   `CellInfoPanel` / `EdgeInfoPanel` and region export resolve against the dataset
   that was actually clicked. `EdgeInfoPanel` used to be pinned to panel 0.
@@ -636,12 +636,25 @@ store merged with one panel's settings; the panel comes from `PanelIndexContext`
 passed explicitly by `ViewerPanel`, which already knows its index. Writes go through
 `patchSettings(patch, panelIndex = null)` — a null index writes to **every** panel, which
 is what keeps one sidebar driving both and makes 2a behaviour-identical to the global
-state it replaced. Phase 2b adds the link toggle that lets them diverge; `patchSettings`
-is the single place that decision will be made.
+state it replaced. `linkSettings` (default true) and `activePanel` decide where a write lands: all panels
+when linked, the active tab when not. `patchSettings` is the single place that decision
+is made, so no setter knows about tabs. `getSetting` reads the *active* panel, which
+read-modify-write setters depend on — unlinked, `toggleLrm` must toggle against the panel
+it is about to write, not panel 0.
+
+Re-linking (`setLinkSettings(true)`) makes every panel adopt the active panel's settings
+via `cloneSettings`, rather than just resuming propagation: a control labelled "linked"
+over two visibly different panels would not be telling the truth, and a shallow copy would
+leave the panels aliasing so the next unlinked edit wrote through to both.
 
 Note `setPanelDataset` resets only the *name-bound* settings (filters, colour-by, gene
 allowlist, hidden LRMs). Geometry, palettes and layer visibility survive a dataset change
 and always have — rebuilding the panel from `makePanel()` would silently wipe them.
+
+The reset always reaches the panel that changed, and the **other** panels only while
+linked. Unlinked, reaching across would contradict the toggle: the sidebar says "editing
+panel 1 only" while an action on panel 2 clears panel 1. That was the cost recorded here
+before v0.8.5, and the link toggle is what made it fixable.
 
 **What is shared (global store):**
 - All layer toggles, opacities, color-by settings, LRM filter, edge density, etc.

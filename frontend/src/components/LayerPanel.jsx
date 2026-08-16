@@ -106,6 +106,7 @@ export default function LayerPanel() {
           Comparing {panelCount} panels — pick each dataset in its header
         </div>
       )}
+      {panelCount >= 2 && <PanelTabs />}
       <div style={{ fontWeight: "bold", marginBottom: 10, fontSize: 13, color: "#fff" }}>Layers</div>
 
       <div style={SECTION_HEADER}>Core</div>
@@ -792,6 +793,67 @@ const EDGE_FILTER_SKIP = new Set([
  * Shown only in split mode. Default on, because independent auto-ranging makes
  * two panels look comparable when they are not — see the store comment.
  */
+/**
+ * Which panel the sidebar edits, and whether edits reach both.
+ *
+ * Split mode only. The tabs also select which panel's values the controls
+ * *display* — unlinked, showing a blend or always panel 0's would make the
+ * sliders lie about the panel you are editing.
+ *
+ * Linked is the default and is the pre-2b behaviour. Switching it back on
+ * re-syncs both panels to the tab you are on, because a control labelled
+ * "linked" over two visibly different panels would not be telling the truth.
+ */
+function PanelTabs() {
+  const { activePanel, setActivePanel, linkSettings, setLinkSettings, panels } =
+    useStore();
+
+  const tab = (i) => {
+    const on = activePanel === i;
+    const name = panels[i]?.dataset;
+    return (
+      <button
+        key={i}
+        onClick={() => setActivePanel(i)}
+        title={name ? `Edit panel ${i + 1} — ${name}` : `Edit panel ${i + 1}`}
+        style={{
+          flex: 1, padding: "3px 6px", fontFamily: "monospace", fontSize: 11,
+          cursor: "pointer", borderRadius: 3,
+          border: `1px solid ${on ? "#5a8" : "#3a3a3a"}`,
+          background: on ? "#2b3a33" : "transparent",
+          color: on ? "#8fd" : "#888",
+        }}
+      >
+        Panel {i + 1}
+      </button>
+    );
+  };
+
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ display: "flex", gap: 4, marginBottom: 4 }}>
+        {tab(0)}
+        {tab(1)}
+      </div>
+      <label style={{
+        display: "flex", alignItems: "center", gap: 6,
+        fontSize: 11, color: linkSettings ? "#8fd" : "#888", cursor: "pointer",
+      }}>
+        <input
+          type="checkbox"
+          checked={linkSettings}
+          onChange={(e) => setLinkSettings(e.target.checked)}
+        />
+        <span>
+          {linkSettings
+            ? "settings linked — edits apply to both panels"
+            : `editing panel ${activePanel + 1} only`}
+        </span>
+      </label>
+    </div>
+  );
+}
+
 function LinkColorScaleRow() {
   const { linkColorScale, setLinkColorScale } = usePanelSettings();
   return (

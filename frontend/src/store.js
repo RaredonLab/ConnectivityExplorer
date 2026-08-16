@@ -64,6 +64,25 @@ export function makeSettings() {
 }
 
 /**
+ * Copy a settings object deeply enough that the panels cannot alias.
+ *
+ * Only the mutable containers need rebuilding — every setter replaces rather
+ * than mutates, so the leaves can be shared.
+ */
+function cloneSettings(src) {
+  return {
+    ...src,
+    hiddenLrms: new Set(src.hiddenLrms),
+    selectedGenes: src.selectedGenes === null ? null : new Set(src.selectedGenes),
+    layers: Object.fromEntries(
+      Object.entries(src.layers).map(([k, v]) => [k, { ...v }])),
+    categoricalOverrides: { ...src.categoricalOverrides },
+    categoryColorOverrides: { ...src.categoryColorOverrides },
+    transcriptColorOverrides: { ...src.transcriptColorOverrides },
+  };
+}
+
+/**
  * One panel's dataset-bound state.
  *
  * `dataset: null` on init; DatasetPicker fills it from /spatial/datasets.
@@ -138,14 +157,20 @@ export const useStore = create((set, get) => ({
       cellColorClamp: { low: null, high: null },
       edgeColorClamp: { low: null, high: null },
     };
-    // Applied to EVERY panel, which is the pre-existing behaviour and its
-    // pre-existing cost: switching one panel's dataset clears the other panel's
-    // filter. Phase 2a is deliberately behaviour-frozen, so that stays for now.
-    // Narrowing this to panel `i` is Phase 2d and is a one-word change here
-    // (`idx === i ? {...} : p.settings`) once the link toggle exists.
+    // The panel whose dataset changed is always reset. The *others* are reset
+    // only while the panels are linked, where they share one set of values and
+    // leaving them would strand a filter naming a column the new dataset lacks
+    // — which 400s on every viewport change.
+    //
+    // Unlinked, reaching across would contradict the toggle the user just set:
+    // the sidebar says "editing panel 1 only" while an action on panel 2
+    // destroys panel 1's work. That was the pre-2b behaviour and the cost
+    // recorded in CLAUDE.md; the link toggle is what makes it fixable, so 2d
+    // lands with 2b rather than after it.
     const panels = s.panels.map((p, idx) => {
       const base = idx === i ? { ...makePanel(), dataset } : p;
-      return { ...base, settings: { ...p.settings, ...RESET } };
+      const reset = idx === i || s.linkSettings;
+      return { ...base, settings: reset ? { ...p.settings, ...RESET } : p.settings };
     });
     // Selections belong to a dataset; drop any that pointed at the old one.
     const sel = s.selection && s.selection.panelIndex === i ? null : s.selection;
@@ -162,11 +187,11 @@ export const useStore = create((set, get) => ({
     };
     const sel = s.selection && s.selection.panelIndex === i && s.selection.kind === "edge"
       ? null : s.selection;
-    // Mechanism and edge-column names are edge-file specific; cleared on every
-    // panel, matching the pre-existing global behaviour.
-    const panels = next.map((p) => ({
-      ...p, settings: { ...p.settings, hiddenLrms: new Set(), edgeFilter: null },
-    }));
+    // Mechanism and edge-column names are specific to one edge file, so the
+    // panel that changed is always cleared; the others only while linked.
+    const panels = next.map((p, idx) => (idx === i || s.linkSettings)
+      ? { ...p, settings: { ...p.settings, hiddenLrms: new Set(), edgeFilter: null } }
+      : p);
     return { panels, selection: sel };
   }),
 
@@ -261,29 +286,74 @@ export const useStore = create((set, get) => ({
   // function becomes the single place where "write to one panel or all of them"
   // is decided. Keeping the named setters means call sites never had to change.
 
-  /** Merge a patch into one panel's settings, or every panel's. */
+  // ── Which panel the sidebar edits, and whether edits propagate ────────────
+  //
+  // activePanel is the tab the sidebar is pointed at. It is also what the
+  // sidebar *reads*, so with the panels unlinked the controls show the values
+  // for the panel you are editing rather than some blend.
+  //
+  // linkSettings defaults to true, which reproduces the pre-2b behaviour
+  // exactly: one sidebar drives both panels. That default is deliberate — two
+  // panels that each drifted to their own palette and clamp look comparable and
+  // are not, which is the same figure-integrity argument behind linkColorScale.
+  activePanel: 0,
+  setActivePanel: (i) => set({ activePanel: i }),
+
+  linkSettings: true,
+  // Re-linking *syncs*: every panel adopts the active panel's settings. The
+  // alternative — start propagating future edits but leave the existing
+  // divergence in place — leaves a control labelled "linked" over two panels
+  // that visibly differ, and the next single edit converges them only
+  // partially. Adopting one panel's state is the only reading of "linked" that
+  // is true the moment you switch it on. Which panel wins is the tab you are
+  // on, so it is visible and chosen rather than incidental.
+  setLinkSettings: (v) => set((s) => {
+    if (!v) return { linkSettings: false };
+    const source = s.panels[s.activePanel]?.settings ?? s.panels[0].settings;
+    return {
+      linkSettings: true,
+      panels: s.panels.map((p) => ({ ...p, settings: cloneSettings(source) })),
+    };
+  }),
+
+  /**
+   * Merge a patch into panel settings.
+   *
+   * An explicit `panelIndex` always wins. Otherwise the link state decides: all
+   * panels when linked, just the active one when not. This is the single place
+   * that choice is made — every named setter routes through here, so none of
+   * them has to know about tabs or linking.
+   */
   patchSettings: (patch, panelIndex = null) =>
-    set((s) => ({
-      panels: s.panels.map((p, i) =>
-        panelIndex === null || i === panelIndex
-          ? { ...p, settings: { ...p.settings, ...patch } }
-          : p),
-    })),
+    set((s) => {
+      const targets = panelIndex !== null
+        ? [panelIndex]
+        : (s.linkSettings ? s.panels.map((_, i) => i) : [s.activePanel]);
+      return {
+        panels: s.panels.map((p, i) =>
+          targets.includes(i)
+            ? { ...p, settings: { ...p.settings, ...patch } }
+            : p),
+      };
+    }),
 
-  /** Read the effective value of one setting. Panel 0 is the reference while
-   *  settings are still written to every panel in lockstep. */
-  getSetting: (key, panelIndex = 0) => get().panels[panelIndex]?.settings?.[key],
+  /**
+   * Read one setting. Defaults to the panel the sidebar is editing, which is
+   * what read-modify-write setters need: unlinked, `toggleLrm` must toggle
+   * against the active panel's Set, not panel 0's.
+   */
+  getSetting: (key, panelIndex = null) => {
+    const s = get();
+    const i = panelIndex ?? s.activePanel;
+    return s.panels[i]?.settings?.[key];
+  },
 
-  setLayerProp: (id, prop, value) =>
-    set((s) => ({
-      panels: s.panels.map((p) => ({
-        ...p,
-        settings: {
-          ...p.settings,
-          layers: { ...p.settings.layers, [id]: { ...p.settings.layers[id], [prop]: value } },
-        },
-      })),
-    })),
+  // Read-modify-write on a nested map, so it derives from the active panel and
+  // then goes through the ordinary targeting rule.
+  setLayerProp: (id, prop, value) => {
+    const cur = get().getSetting("layers");
+    get().patchSettings({ layers: { ...cur, [id]: { ...cur[id], [prop]: value } } });
+  },
 
   setCellBoundaryFraction: (v) => get().patchSettings({
     cellBoundaryFraction: v !== null ? Math.max(0.0001, Math.min(1.0, v)) : null,

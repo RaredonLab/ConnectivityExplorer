@@ -30,7 +30,7 @@ export default function AnnotationToolbar({ onScreenshot, panelIndex = 0 }) {
     panelCount, setPanelCount,
     requestZoomMatch,
     panelRotations, setPanelRotation,
-  } = usePanelSettings();
+  } = usePanelSettings(panelIndex);   // this toolbar belongs to one panel
 
   // Count and clear only this panel's own annotations: the toolbar is rendered
   // per panel, so a Clear here wiping the other panel's work would be a
