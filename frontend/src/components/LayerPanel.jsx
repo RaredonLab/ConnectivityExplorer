@@ -1692,6 +1692,7 @@ function RegionsSection() {
   // that panel's dataset. Older regions carry no panelIndex; treat them as
   // panel 0, which is where they could only have come from.
   const panels = useStore((s) => s.panels);
+  const panelCount = useStore((s) => s.panelCount);
   if (regions.length === 0) return null;
 
   const exportRegion = async (region) => {
@@ -1723,6 +1724,12 @@ function RegionsSection() {
             <div style={{ width: 10, height: 10, borderRadius: 2, background: swatch, flexShrink: 0 }} />
             <span style={{ flex: 1, fontSize: 11, color: "#aaa" }}>
               {r.selectedCellIds.length} cells
+              {/* The sidebar is shared, so in split mode a bare cell count does
+                  not say which tissue it came from — and the two panels may be
+                  different datasets entirely. */}
+              {panelCount >= 2 && (
+                <span style={{ color: "#666" }}> · panel {(r.panelIndex ?? 0) + 1}</span>
+              )}
             </span>
             <button
               title="Export cells as CSV"

@@ -333,27 +333,64 @@ export const useStore = create((set, get) => ({
   annotationMode: "pan", // "pan" | "region" | "measure"
   setAnnotationMode: (mode) => set({ annotationMode: mode }),
 
-  // activeRegion: vertices of the polygon currently being drawn (image px)
+  // Every annotation belongs to the panel it was drawn in, and this is not
+  // cosmetic. Coordinates are image pixels of *that panel's* dataset, so a
+  // polygon over a 6.5 mm Visium capture area reappearing in a panel showing a
+  // 55 µm seqFISH ROI lands somewhere meaningless. Two silent consequences are
+  // worse than the visual one: CSV export resolves the region's cell ids
+  // against its panel's dataset, and a measurement label multiplies distPx by
+  // its panel's pixelSize. Both give confidently wrong answers if an annotation
+  // is read by the wrong panel.
+  //
+  // `panelIndex` is absent on anything created before this existed; the
+  // selectors below treat that as panel 0, which is the only place it could
+  // have come from.
+
+  // activeRegion: vertices of the polygon currently being drawn (image px).
+  // activeRegionPanel: which panel is drawing, so the in-progress outline and
+  // its vertex markers do not also appear in the other panel.
   activeRegion: [],
-  addRegionPoint: (pt) => set((s) => ({ activeRegion: [...s.activeRegion, pt] })),
-  cancelActiveRegion: () => set({ activeRegion: [] }),
+  activeRegionPanel: null,
+  addRegionPoint: (pt, panelIndex = 0) =>
+    set((s) => ({ activeRegion: [...s.activeRegion, pt], activeRegionPanel: panelIndex })),
+  cancelActiveRegion: () => set({ activeRegion: [], activeRegionPanel: null }),
 
   // regions: completed annotation polygons
-  // each: { id, points [[x,y],...], selectedCellIds [str,...], color [r,g,b] }
+  // each: { id, points [[x,y],...], selectedCellIds [str,...], color [r,g,b], panelIndex }
   regions: [],
-  commitRegion: (region) =>
-    set((s) => ({ regions: [...s.regions, region], activeRegion: [] })),
+  commitRegion: (region, panelIndex = 0) =>
+    set((s) => ({
+      regions: [...s.regions, { ...region, panelIndex }],
+      activeRegion: [],
+      activeRegionPanel: null,
+    })),
   removeRegion: (id) =>
     set((s) => ({ regions: s.regions.filter((r) => r.id !== id) })),
 
-  // measurements: [{id, p1:[x,y], p2:[x,y], distPx}]
+  // measurements: [{id, p1:[x,y], p2:[x,y], distPx, panelIndex}]
   measurements: [],
-  addMeasurement: (m) => set((s) => ({ measurements: [...s.measurements, m] })),
+  addMeasurement: (m, panelIndex = 0) =>
+    set((s) => ({ measurements: [...s.measurements, { ...m, panelIndex }] })),
   removeMeasurement: (id) =>
     set((s) => ({ measurements: s.measurements.filter((m) => m.id !== id) })),
 
-  clearAnnotations: () =>
-    set({ activeRegion: [], regions: [], measurements: [] }),
+  regionsForPanel: (i) =>
+    get().regions.filter((r) => (r.panelIndex ?? 0) === i),
+  measurementsForPanel: (i) =>
+    get().measurements.filter((m) => (m.panelIndex ?? 0) === i),
+
+  // Scoped to a panel, because the Clear button lives in each panel's own
+  // toolbar — clearing from one panel must not wipe the other's work. Omitting
+  // the index clears everything, which is what a dataset-level reset wants.
+  clearAnnotations: (panelIndex) =>
+    set((s) => (panelIndex === undefined
+      ? { activeRegion: [], activeRegionPanel: null, regions: [], measurements: [] }
+      : {
+          activeRegion: s.activeRegionPanel === panelIndex ? [] : s.activeRegion,
+          activeRegionPanel: s.activeRegionPanel === panelIndex ? null : s.activeRegionPanel,
+          regions: s.regions.filter((r) => (r.panelIndex ?? 0) !== panelIndex),
+          measurements: s.measurements.filter((m) => (m.panelIndex ?? 0) !== panelIndex),
+        })),
 
   // ── Rendering / loading state ─────────────────────────────────────────────
   // loadingKeys: Set of string keys currently in flight (one entry per panel).

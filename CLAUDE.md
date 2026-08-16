@@ -615,6 +615,19 @@ Consequences worth knowing:
   `imageSize.w` changed (fixes the bug where morphology stayed visible after
   dataset switches with same-dimension images, and in panel 2 on first open)
 
+**Annotations belong to the panel that drew them.** `regions` and `measurements`
+each carry a `panelIndex`, and `ViewerPanel` renders only its own. This is not
+cosmetic: coordinates are image pixels of *that panel's* dataset, so a polygon
+over a 6.5 mm Visium capture area reappearing in a 55 µm seqFISH panel lands
+nowhere meaningful. Two consequences were worse because they were silent — CSV
+export resolves `selectedCellIds` against `panels[r.panelIndex].dataset` (it read
+that field before anything wrote it, so every export used panel 0), and a
+measurement label is `distPx * pixelSize` for its own panel (a 100 px line reads
+100 µm on CosMx and 10.8 µm on MERSCOPE). `clearAnnotations(panelIndex)` is
+likewise scoped, since the button lives in each panel's own toolbar; omitting the
+index still clears everything. Anything created before this carries no
+`panelIndex` and is treated as panel 0.
+
 **What is shared (global store):**
 - All layer toggles, opacities, color-by settings, LRM filter, edge density, etc.
 - `edgeFile` is **not** shared — it moved to `panels[i]` in Phase 1, along with the
@@ -1300,6 +1313,17 @@ Datasets absent from a checkout are skipped, so it works with only the committed
 Two determinism rules keep it honest: record-list digests are order-independent (because
 `query_grouped` uses `ORDER BY RANDOM()`), and sampling is seeded (`duck.SAMPLE_SEED`).
 If a probe changes and you cannot explain why, that is the point of the tool.
+
+**Frontend tests** run under Vitest, added with the annotation fix in v0.8.5:
+
+```bash
+cd frontend && npm test        # vitest run
+cd frontend && npm run test:watch
+```
+
+`src/store.annotations.test.js` is the first of them. Store logic is plain JS, so
+these need no DOM and no jsdom dependency — reducers can be exercised directly
+through `useStore.getState()`. Coverage is currently annotations only.
 
 There is still **no CI and no linter** — no `.github/workflows`, no ESLint or Python lint
 config. The snapshot is a guard, not a test suite: it catches "this changed" but does not

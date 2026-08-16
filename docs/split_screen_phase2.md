@@ -170,9 +170,12 @@ hosted manual) for the tabs, the link toggle and the push button.
 
 ## Risks
 
-**There is no frontend test of any kind.** The golden-snapshot guard is
-backend-only, and this refactor is entirely frontend. A 30-key state migration
-across 19 components with no automated check is the main risk in this plan.
+**Frontend test coverage is minimal.** Vitest now exists (`npm test` in
+`frontend/`), but it covers only annotation panel-scoping — the golden-snapshot
+guard is still backend-only, and a 30-key state migration across 19 components
+has almost no automated check behind it. This remains the main risk in the plan.
+Store logic is plain JS and testable without a DOM, so 2a is a good excuse to
+cover the settings reducers as they move.
 Mitigations: keep 2a strictly behaviour-preserving so it can be verified by
 comparing before/after; exercise both single and split mode against at least two
 platforms; and check the OSD ↔ deck.gl bridge explicitly, since the guard has
@@ -188,16 +191,12 @@ here, but it becomes a more visible gap after Phase 2, not less.
 
 ## Out of scope, but adjacent
 
-**Annotations are global and should not be.** `regions` and `measurements` carry
-no panel index, and `Viewer.jsx` renders `regions.map(...)` unfiltered — so every
-region draws in *both* panels, at identical image-pixel coordinates. With one
-dataset in both panels that is arguably a feature. With two different datasets it
-is wrong: a polygon drawn on a 6.5 mm Visium capture area is re-drawn at those
-same pixel coordinates on a 55 µm seqFISH ROI, landing somewhere meaningless.
-
-This is a Phase 1 gap rather than a Phase 2 requirement, and it is a genuine bug
-rather than a missing feature. Fix it separately — `regions` and `measurements`
-each need a `panelIndex`, and the region layers need to filter on it.
+**Annotations were global — fixed before this plan started.** `regions` and
+`measurements` carried no panel index, so every annotation drew in both panels at
+identical image-pixel coordinates, CSV export always resolved against panel 0's
+dataset, and measurement labels used the *rendering* panel's `pixelSize`. Both
+were silent wrong answers rather than visible breakage. Each annotation now
+carries `panelIndex`, and `store.annotations.test.js` covers the scoping.
 
 **Per-panel edge file already exists** (`panels[i].edgeFile`, Phase 1). CLAUDE.md
 described it as global in three places, contradicting the code; corrected when this
