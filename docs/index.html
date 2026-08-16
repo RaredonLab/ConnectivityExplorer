@@ -758,6 +758,19 @@ write.csv(
   image is viewed, TissuePlex builds a tile pyramid (10–30 seconds); if the
   canvas looks blank, wait and refresh.</p>
 
+  <p>In <a href="#split-screen">split-screen mode</a> these dropdowns move into
+  each panel's own header instead, because the two panels can show different
+  datasets and an image or edge file only means something relative to one of
+  them.</p>
+
+  <div class="note">
+    <p>Changing a panel's dataset clears the settings that name a column, gene or
+    mechanism — metadata filters, the color-by field, the gene selection, the
+    mechanism checklist. It has to: those names come from the dataset you just
+    left. Sliders, palettes and layer visibility are kept. While the panels are
+    linked, this clears both; unlinked, only the panel you changed.</p>
+  </div>
+
   <div class="callout tip">
     <strong class="label">Tip:</strong> TissuePlex works best in
     <strong>Google Chrome</strong> or <strong>Firefox</strong>. Switch to Chrome
@@ -1129,22 +1142,75 @@ write.csv(
 <!-- ── Split screen ───────────────────────────────────────────────────── -->
 <section id="split-screen">
   <h2 class="section-title">Split-Screen Mode</h2>
-  <p>Split-screen mode divides the viewer into two independent side-by-side
-  panels, each with its own pan and zoom position. Use it to compare two tissue
-  regions or to view the same region with different filter settings.</p>
+  <p>Split-screen mode divides the viewer into two side-by-side panels. Each has
+  its own pan and zoom, and <strong>each can show a different dataset</strong> —
+  so you can put two samples, two platforms, or two timepoints next to each
+  other. Both panels can also show the same dataset rendered two different ways.</p>
 
   <ul>
     <li>Click <span class="ui">⊞ Split</span> in the annotation toolbar to
     enter split-screen mode.</li>
     <li>Click <span class="ui">□ Single</span> to return to a single panel.</li>
-    <li>Both panels share all layer settings (visibility, color-by, LRM filter,
-    etc.) but have independent pan and zoom positions.</li>
+    <li>In split mode each panel gets its own <strong>dataset, image and edge-source
+    picker in its header</strong>, since those only mean something relative to one
+    dataset.</li>
   </ul>
+
+  <h3>Choosing Which Panel You Are Editing</h3>
+  <p>The sidebar drives both panels. At the top of it,
+  <span class="ui">Panel 1</span> / <span class="ui">Panel 2</span> tabs choose
+  which one your edits apply to, and a checkbox below them controls whether they
+  are linked:</p>
+
+  <ul>
+    <li><strong>Linked</strong> (the default): every change — opacity, palette,
+    color-by, filters, mechanism selection, edge geometry — applies to both
+    panels at once. This is what makes a side-by-side comparison actually
+    comparable.</li>
+    <li><strong>Unlinked</strong>: edits apply only to the tab you are on. Use
+    this to show cluster coloring on one side and gene expression on the other,
+    or two palettes, or two filters.</li>
+  </ul>
+
+  <div class="note">
+    <p>Switching the checkbox back on <strong>re-syncs</strong> both panels to the
+    tab you are currently on. That is deliberate: a control labelled "linked"
+    over two visibly different panels would not be telling you the truth. Pick
+    the tab whose look you want to keep <em>before</em> you re-link.</p>
+  </div>
+
+  <h3>Copying Settings From One Panel to the Other</h3>
+  <p>While the panels are unlinked, a
+  <span class="ui">copy panel 1 → panel 2</span> button appears under the
+  checkbox. It copies every display setting from the tab you are on to the other
+  panel in one go, and then leaves the panels independent again — so you can
+  establish a common baseline and diverge from it.</p>
+
+  <p>Settings that name something the other dataset does not have are dropped
+  rather than copied: a metadata filter on a column it lacks, a gene allowlist
+  with no genes in common, mechanisms absent from its edge file. Color range
+  limits also reset when the two panels show different datasets, because a range
+  measured in one dataset's units is meaningless in another's.</p>
 
   <h3>Matching Zoom Between Panels</h3>
   <p>The <span class="ui">⇔ Match</span> button sets the other panel to your
-  current panel's zoom level while each panel remains centered on its own
-  region.</p>
+  current panel's zoom while each panel stays centered on its own region.</p>
+
+  <div class="note">
+    <p>Match works in <strong>microns, not pixels</strong>, so the same physical
+    distance spans the same width on screen in both panels — exactly as a scale
+    bar would. This matters when the panels hold different platforms: 20% of a
+    6.5&nbsp;mm Visium capture area and 20% of a 55&nbsp;µm seqFISH region differ
+    by more than fifty-fold.</p>
+  </div>
+
+  <h3>Color Scales Across Panels</h3>
+  <p>The <span class="ui">shared colour scale across panels</span> checkbox, on
+  by default, makes both panels map color through one range computed across both.
+  Leave it on for any figure. Two panels that each auto-scaled to their own data
+  <em>look</em> comparable and are not — one panel's yellow might be 40 counts and
+  the other's 4,000. Turn it off only when one panel's range is so much narrower
+  that sharing flattens it, and say so in the legend.</p>
 </section>
 
 
@@ -1162,8 +1228,17 @@ write.csv(
     distance between them in micrometers.</li>
   </ul>
 
-  <p>The <span class="ui">Clear</span> button removes all regions and
-  measurements at once.</p>
+  <p>The <span class="ui">Clear</span> button removes the regions and
+  measurements belonging to <em>that panel</em> — each panel has its own toolbar,
+  so clearing one leaves the other's work alone.</p>
+
+  <div class="note">
+    <p>In split-screen mode, regions and measurements belong to the panel they
+    were drawn in and appear only there. They are stored in that dataset's
+    coordinates, so a region drawn on one tissue would land somewhere meaningless
+    if it were drawn on the other. Exported cell lists and measured distances
+    likewise resolve against the panel that produced them.</p>
+  </div>
 
   <h3>Exporting Cells Within a Region</h3>
   <p>Each drawn region appears in the Layer Panel's <strong>Regions</strong>

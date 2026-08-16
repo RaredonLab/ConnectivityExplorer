@@ -1,6 +1,7 @@
 # Split screen, Phase 2 — per-panel settings
 
-Status: **planned, not started.** Phase 1 shipped in v0.8.4 (PR #56).
+Status: **complete.** Phase 1 shipped in v0.8.4 (PR #56); stages 2a–2e followed.
+Kept as the record of what was decided and why, not as outstanding work.
 
 Phase 1 made the two panels able to show two *different datasets*. Phase 2 makes
 their *settings* independent, with an explicit way to re-link them. This document
@@ -197,8 +198,15 @@ global reset breaks it: an action on panel 2 still destroys panel 1's work, so
 — changed is always reset; the others only while linked, where they share one
 set of values and a stale filter would 400 on every viewport change.
 
-**2e — docs.** CLAUDE.md's Split-Screen section, and `docs/index.html` (the
-hosted manual) for the tabs, the link toggle and the push button.
+**2e — docs. DONE.** CLAUDE.md was updated as each stage landed.
+`docs/index.html`, the hosted manual, needed more than an addition: it claimed
+"Both panels share all layer settings … but have independent pan and zoom
+positions", which stopped being true at Phase 1 and had been wrong through two
+releases. It now covers two datasets side by side, the panel tabs and link
+toggle (including that re-linking re-syncs to the active tab), the copy button
+and what it drops, micron-based zoom matching, the shared colour scale, and
+per-panel annotations. The dataset-picker section gained a note that the pickers
+move into the panel headers in split mode and what a dataset change clears.
 
 ## Risks
 
