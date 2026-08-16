@@ -203,6 +203,9 @@ docs/
   cloud-deploy.md            DigitalOcean deployment runbook (~$106–116/mo)
   public_datasets.md         Public datasets used for development, and the classic
                              Visium pair the reader was verified against
+  split_screen_phase2.md     Spec for making panel *settings* per-panel. Phase 1
+                             (per-panel datasets) shipped in v0.8.4; this is what
+                             remains. Read before touching store.js's shared state.
   index.html                 The user manual, published to GitHub Pages at
                              https://raredonlab.github.io/TissuePlex/ — hand-written
                              HTML, no build step. Update it when a UI control changes.
@@ -368,12 +371,14 @@ param (e.g. `"edges/edge.raw.minimum.parquet"`); `label` is the display name
 `(dataset, edge_file)`. `_reader()` resolves `edge_file` under the dataset directory
 and rejects anything that escapes it (path-traversal guard → 400; missing file → 404).
 
-**Frontend** — a single global `edgeFile` in the store applies to **all** open viewer
-panels (see the Split-Screen note; a per-panel edge file was deliberately deferred
-because LRM catalogue / color ranges are edge-file-specific and the sidebar is shared).
-The picker is a `<select>` at the top of the Edge Data section in `LayerPanel.jsx`,
-shown only when the dataset has >1 edge file. `setEdgeFile` and `setDataset` both
-reset the edge-file-scoped state (`lrmCatalogue`, `hiddenLrms`, `selectedEdge`,
+**Frontend** — `edgeFile` is **per panel** (`panels[i].edgeFile`), so two panels can
+compare two edge sources. It was global until v0.8.4; the deferral recorded here
+(LRM catalogue and colour ranges are edge-file-specific, and one sidebar cannot drive
+two of them) was resolved by Phase 1 of the split-screen work, which moved every
+dataset-bound value into `panels[i]`. In split mode the picker sits in each panel's
+header via `DatasetPicker`; in single-panel mode it stays in the Edge Data section of
+`LayerPanel.jsx`. Either way it is shown only when the dataset has >1 edge file.
+`setPanelEdgeFile` and `setPanelDataset` both reset the edge-file-scoped state (`lrmCatalogue`, `hiddenLrms`, `selectedEdge`,
 `edgeColorRange`, `edgeColorClamp`) so stale LRM/color state from the previous file
 never leaks. `edgeFile` is threaded as `?edge_file=…` through all six edge fetch
 sites: `useEdges` (query-grouped, query-scores), `useEdgeColors` (edge-color-values),
@@ -388,9 +393,9 @@ All shared state lives in a single Zustand store. Key sections:
 
 - **Dataset / image**: `dataset` (null on init, auto-set from `/spatial/datasets`),
   `activeImage` (which OME-TIFF to show; auto-set from `/spatial/{dataset}/images`)
-- **Edge file**: `edgeFile` (default `"edges.parquet"`) — which edge-source parquet to
-  render; global (applies to all panels). `setEdgeFile` / `setDataset` reset the
-  edge-file-scoped state. See "Multiple Edge Files" above.
+- **Edge file**: `panels[i].edgeFile` (default `"edges.parquet"`) — which edge-source
+  parquet that panel renders. Per-panel since v0.8.4. `setPanelEdgeFile` /
+  `setPanelDataset` reset the edge-file-scoped state. See "Multiple Edge Files" above.
 - **Layer visibility**: `layers` object — each layer has `visible` + `opacity`;
   `cellSegments` also has `outlineOpacity` (independent from fill opacity)
 - **Cell color**: `cellColorEnabled`, `colorBy` (`mode`: off/gene_set/metadata, `field`),
@@ -565,7 +570,9 @@ stats. Each of those differs between datasets, so none of them can be global.
 
 Style and choice settings — layer opacity, palettes, colour-by, filters, LRM
 selection, edge geometry — deliberately stay **shared**: one sidebar drives both
-panels, which is what makes a side-by-side comparison comparable. The sidebar
+panels, which is what makes a side-by-side comparison comparable. Making those
+per-panel, with a link toggle and a push-to-other-panel button, is Phase 2 —
+specified in `docs/split_screen_phase2.md`, not yet started. The sidebar
 reconciles across panels with `hooks/usePanels.js`, whose rule is **union, then
 degrade per panel**: offer a control if *either* panel can use it, and let the
 panel that cannot render nothing. Intersecting instead would hide controls that
@@ -610,10 +617,8 @@ Consequences worth knowing:
 
 **What is shared (global store):**
 - All layer toggles, opacities, color-by settings, LRM filter, edge density, etc.
-- `edgeFile` — the selected edge-source parquet applies to both panels. A per-panel
-  edge file was deferred (issue #46 discussion): LRM catalogue + color ranges are
-  edge-file-specific, and the single sidebar can't drive two different edge sets
-  equally. Revisit if side-by-side comparison of different edge files is needed.
+- `edgeFile` is **not** shared — it moved to `panels[i]` in Phase 1, along with the
+  LRM catalogue and colour ranges that made sharing it incoherent.
 - `selectedCell`, `selectedEdge` (global — EdgeInfoPanel only renders in panel 0)
 - `imageSize` (both panels open the same DZI; panel 0 sets it, panel 1 may also set
   the same values redundantly — harmless)
