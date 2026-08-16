@@ -572,8 +572,11 @@ Style and choice settings — layer opacity, palettes, colour-by, filters, LRM
 selection, edge geometry — are **shared by default** and can be unlinked per
 panel from the sidebar tabs (Phase 2a/2b). One sidebar driving both panels is
 what makes a side-by-side comparison comparable, so linked stays the default.
-See `docs/split_screen_phase2.md`; the remaining stage is 2c, an explicit
-push-settings-to-the-other-panel button. The sidebar
+A `copy panel N → panel M` button under the toggle pushes one panel's settings
+onto the other in one shot, dropping any that name a column, gene or mechanism
+the target dataset lacks — an inherited filter on a missing column 400s on every
+viewport change and the panel silently stops rendering. See
+`docs/split_screen_phase2.md`; only the docs pass (2e) remains. The sidebar
 reconciles across panels with `hooks/usePanels.js`, whose rule is **union, then
 degrade per panel**: offer a control if *either* panel can use it, and let the
 panel that cannot render nothing. Intersecting instead would hide controls that

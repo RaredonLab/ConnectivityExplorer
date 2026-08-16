@@ -83,6 +83,67 @@ function cloneSettings(src) {
 }
 
 /**
+ * Strip settings that name something the target dataset does not have.
+ *
+ * Copying settings across datasets is where this gets dangerous rather than
+ * merely wrong-looking: a `cellFilter` naming a column the target lacks makes
+ * the backend return 400 on *every* viewport change, so the panel stops
+ * rendering entirely and the cause is invisible from the UI. Dropping the
+ * setting degrades to "no filter", which is recoverable and obvious.
+ *
+ * `allowed` supplies the target's vocabulary — `{cellFields, edgeFields, genes,
+ * lrms}`, each a Set or null to skip that check. The caller provides it because
+ * metadata columns come from /cells/schema and /edges/schema, which the store
+ * does not fetch; genes and LRMs it already holds per panel.
+ *
+ * `sameDataset` governs the colour clamps. A clamp is a range in the *source*
+ * data's units — carrying [0, 4000] onto a dataset topping out at 70 paints
+ * everything the bottom colour, which reads as a broken render rather than a
+ * copied setting. Same dataset, the clamp is exactly what you meant to copy.
+ */
+export function sanitiseSettings(next, allowed, sameDataset) {
+  const { cellFields = null, edgeFields = null, genes = null, lrms = null } = allowed ?? {};
+  const has = (set, v) => set === null || set.has(v);
+  const filterKeys = (obj, keep) =>
+    Object.fromEntries(Object.entries(obj).filter(([k]) => keep(k)));
+
+  if (next.colorBy?.mode === "metadata" && !has(cellFields, next.colorBy.field)) {
+    next.colorBy = { mode: "off", field: null };
+  }
+  if (next.edgeColorBy?.mode === "metadata" && !has(edgeFields, next.edgeColorBy.field)) {
+    next.edgeColorBy = { mode: "lrm_set", field: null };
+  }
+  if (next.cellFilter && !has(cellFields, next.cellFilter.field)) next.cellFilter = null;
+  if (next.edgeFilter && !has(edgeFields, next.edgeFilter.field)) next.edgeFilter = null;
+
+  if (next.selectedGenes && genes) {
+    const keep = [...next.selectedGenes].filter((g) => genes.has(g));
+    // No overlap at all means the allowlist says nothing about this panel.
+    // Falling back to "no filter" matches what a dataset change does; an empty
+    // Set would mean "show no species", which is a stranger thing to inherit.
+    next.selectedGenes = keep.length ? new Set(keep) : null;
+  }
+  if (next.hiddenLrms && lrms) {
+    next.hiddenLrms = new Set([...next.hiddenLrms].filter((l) => lrms.has(l)));
+  }
+
+  next.categoricalOverrides = filterKeys(next.categoricalOverrides, (k) => {
+    const [scope, field] = k.split("::");
+    return has(scope === "edge" ? edgeFields : cellFields, field);
+  });
+  next.categoryColorOverrides = filterKeys(next.categoryColorOverrides,
+    (k) => has(cellFields, k.split("::")[0]));
+  next.transcriptColorOverrides = filterKeys(next.transcriptColorOverrides,
+    (k) => has(genes, k));
+
+  if (!sameDataset) {
+    next.cellColorClamp = { low: null, high: null };
+    next.edgeColorClamp = { low: null, high: null };
+  }
+  return next;
+}
+
+/**
  * One panel's dataset-bound state.
  *
  * `dataset: null` on init; DatasetPicker fills it from /spatial/datasets.
@@ -314,6 +375,24 @@ export const useStore = create((set, get) => ({
       linkSettings: true,
       panels: s.panels.map((p) => ({ ...p, settings: cloneSettings(source) })),
     };
+  }),
+
+  /**
+   * Copy one panel's settings onto another.
+   *
+   * The explicit form of what the link toggle does continuously: explore either
+   * side freely, then force the other to match. Unlike linking it is one-shot,
+   * so the panels stay independent afterwards.
+   *
+   * `allowed` is the target's vocabulary; see sanitiseSettings. Passing null
+   * copies verbatim, which is only safe when both panels show the same dataset.
+   */
+  pushSettings: (from, to, allowed = null) => set((s) => {
+    const src = s.panels[from]?.settings;
+    if (!src || !s.panels[to] || from === to) return {};
+    const sameDataset = s.panels[from].dataset === s.panels[to].dataset;
+    const next = sanitiseSettings(cloneSettings(src), allowed, sameDataset);
+    return { panels: s.panels.map((p, i) => (i === to ? { ...p, settings: next } : p)) };
   }),
 
   /**

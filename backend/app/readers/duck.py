@@ -67,7 +67,10 @@ def _default_memory_limit() -> str:
     return f"{mb}MB"
 
 
-_MEMORY_LIMIT = os.getenv("DUCKDB_MEMORY_LIMIT") or _default_memory_limit()
+# .strip() matters: an unset variable and one set to "" or "   " must all fall
+# through to the computed default. A whitespace value is truthy, so without it
+# DuckDB receives `SET memory_limit='   '` and raises a ParserException.
+_MEMORY_LIMIT = (os.getenv("DUCKDB_MEMORY_LIMIT") or "").strip() or _default_memory_limit()
 _THREADS = os.getenv("DUCKDB_THREADS", "4")
 
 

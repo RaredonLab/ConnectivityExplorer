@@ -171,12 +171,24 @@ Two decisions worth knowing:
   Identical while linked; unlinked, the active panel's gene selection would
   describe the wrong cell.
 
-**2c — push settings.** `pushSettings(from, to)` deep-copies
-`panels[from].settings` into `panels[to]`. One button per panel header, labelled
-with its direction. Needs a guard: settings naming a column, gene or LRM that the
-target dataset does not have must be dropped rather than copied, or the target
-panel starts 400ing on every viewport change — the same failure mode as
-problem 1. Validate against the target's schema/gene list before writing.
+**2c — push settings. DONE.** `pushSettings(from, to, allowed)` deep-copies the
+source panel's settings onto the target, sanitised by `sanitiseSettings`. The
+button lives under the link toggle and appears only when the panels are unlinked,
+since pushing between linked panels is a no-op; its label names the direction
+(`copy panel 1 → panel 2`).
+
+The guard is the substance. Settings naming a column, gene or mechanism the
+target lacks are dropped, because a `cellFilter` on a missing column makes the
+backend 400 on *every* viewport change — the panel stops rendering with no
+indication why. Column names come from `/cells/schema` and `/edges/schema`, which
+the store never fetches, so the component gathers the vocabulary and the store
+action stays pure and testable; genes and LRMs it already holds per panel.
+
+Two rules worth knowing: a gene allowlist with no overlap falls back to `null`
+("no filter") rather than an empty Set ("show no species"), matching what a
+dataset change leaves behind; and the colour clamps reset when the datasets
+differ, since a range in one dataset's units — [0, 4000] onto data topping out at
+70 — paints everything the bottom colour and reads as a broken render.
 
 **2d — narrow the dataset-change reset. DONE, folded into 2b.** Sequencing it
 last turned out to be wrong. 2b makes the promise "editing panel 1 only", and a

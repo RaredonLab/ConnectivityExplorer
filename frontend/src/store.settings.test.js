@@ -271,3 +271,136 @@ describe("2b — re-linking adopts the active panel's settings", () => {
     expect(settings(1).edgeWidth).toBe(before);
   });
 });
+
+describe("2c — pushSettings copies one panel onto the other", () => {
+  beforeEach(() => {
+    S().setLinkSettings(false);
+    S().setActivePanel(0);
+    S().setEdgeWidth(8);
+    S().setCellColorPalette("magma");
+    S().setLayerProp("edges", "visible", true);
+  });
+
+  it("copies dataset-independent settings verbatim", () => {
+    S().pushSettings(0, 1);
+    expect(settings(1).edgeWidth).toBe(8);
+    expect(settings(1).cellColorPalette).toBe("magma");
+    expect(settings(1).layers.edges.visible).toBe(true);
+  });
+
+  it("leaves the source untouched and the panels independent", () => {
+    S().pushSettings(0, 1);
+    S().setActivePanel(1);
+    S().setEdgeWidth(1);
+    expect(settings(0).edgeWidth).toBe(8);
+    // A shallow copy would alias the containers and write through.
+    S().setLayerProp("edges", "visible", false);
+    expect(settings(0).layers.edges.visible).toBe(true);
+  });
+
+  it("is a no-op onto itself", () => {
+    S().pushSettings(0, 0);
+    expect(settings(0).edgeWidth).toBe(8);
+  });
+});
+
+describe("2c — the guard drops what the target cannot honour", () => {
+  const allowed = {
+    cellFields: new Set(["cluster"]),
+    edgeFields: new Set(["confidence"]),
+    genes: new Set(["A", "B"]),
+    lrms: new Set(["L1|R1"]),
+  };
+
+  beforeEach(() => {
+    S().setLinkSettings(false);
+    S().setActivePanel(0);
+    // Give panel 1 a different dataset so the clamp rule engages too.
+    useStore.setState({
+      panels: S().panels.map((p, i) => ({ ...p, dataset: i === 0 ? "src" : "dst" })),
+    });
+  });
+
+  it("drops a cell filter naming a missing column", () => {
+    // The dangerous one: the backend 400s on every viewport change, so the
+    // panel renders nothing and the UI gives no clue why.
+    S().setCellFilter({ field: "absent_column", values: ["x"] });
+    S().pushSettings(0, 1, allowed);
+    expect(settings(1).cellFilter).toBeNull();
+  });
+
+  it("keeps a cell filter the target does have", () => {
+    S().setCellFilter({ field: "cluster", values: ["4"] });
+    S().pushSettings(0, 1, allowed);
+    expect(settings(1).cellFilter).toEqual({ field: "cluster", values: ["4"] });
+  });
+
+  it("turns colour-by off when it names a missing column", () => {
+    S().setColorBy("metadata", "absent_column");
+    S().pushSettings(0, 1, allowed);
+    expect(settings(1).colorBy).toEqual({ mode: "off", field: null });
+  });
+
+  it("leaves a non-metadata colour-by alone", () => {
+    S().setColorBy("gene_set", null);
+    S().pushSettings(0, 1, allowed);
+    expect(settings(1).colorBy).toEqual({ mode: "gene_set", field: null });
+  });
+
+  it("drops an edge filter and edge colour-by naming missing columns", () => {
+    S().setEdgeFilter({ field: "nope", values: ["1"] });
+    S().setEdgeColorBy("metadata", "nope");
+    S().pushSettings(0, 1, allowed);
+    expect(settings(1).edgeFilter).toBeNull();
+    expect(settings(1).edgeColorBy).toEqual({ mode: "lrm_set", field: null });
+  });
+
+  it("intersects the gene allowlist", () => {
+    S().setSelectedGenes(new Set(["A", "ZZZ"]));
+    S().pushSettings(0, 1, allowed);
+    expect([...settings(1).selectedGenes]).toEqual(["A"]);
+  });
+
+  it("falls back to no filter when no selected gene exists in the target", () => {
+    // An empty Set would mean "show no species", a stranger thing to inherit
+    // than "no filter" — which is also what a dataset change leaves behind.
+    S().setSelectedGenes(new Set(["ZZZ"]));
+    S().pushSettings(0, 1, allowed);
+    expect(settings(1).selectedGenes).toBeNull();
+  });
+
+  it("intersects hidden mechanisms", () => {
+    S().toggleLrm("L1|R1");
+    S().toggleLrm("L9|R9");
+    S().pushSettings(0, 1, allowed);
+    expect([...settings(1).hiddenLrms]).toEqual(["L1|R1"]);
+  });
+
+  it("drops keyed overrides whose column or gene is absent", () => {
+    S().setCategoricalOverride("cell", "cluster", true);
+    S().setCategoricalOverride("cell", "absent_column", true);
+    S().setCategoryColorOverride("cluster", "4", [1, 2, 3, 255]);
+    S().setCategoryColorOverride("absent_column", "x", [1, 2, 3, 255]);
+    S().setTranscriptColorOverride("A", [1, 2, 3, 255]);
+    S().setTranscriptColorOverride("ZZZ", [1, 2, 3, 255]);
+    S().pushSettings(0, 1, allowed);
+    expect(Object.keys(settings(1).categoricalOverrides)).toEqual(["cell::cluster"]);
+    expect(Object.keys(settings(1).categoryColorOverrides)).toEqual(["cluster::4"]);
+    expect(Object.keys(settings(1).transcriptColorOverrides)).toEqual(["A"]);
+  });
+
+  it("resets colour clamps across different datasets, keeps them within one", () => {
+    // A clamp is a range in the source data's units. [0,4000] onto a dataset
+    // topping out at 70 paints everything the bottom colour, which reads as a
+    // broken render rather than a copied setting.
+    S().setCellColorClamp(0, 4000);
+    S().pushSettings(0, 1, allowed);
+    expect(settings(1).cellColorClamp).toEqual({ low: null, high: null });
+
+    useStore.setState({ panels: S().panels.map((p) => ({ ...p, dataset: "same" })) });
+    S().setActivePanel(0);
+    S().setCellColorClamp(0, 4000);
+    S().pushSettings(0, 1, allowed);
+    expect(settings(1).cellColorClamp).toEqual({ low: 0, high: 4000 });
+  });
+});

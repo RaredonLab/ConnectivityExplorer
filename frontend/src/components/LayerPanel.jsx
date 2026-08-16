@@ -850,7 +850,80 @@ function PanelTabs() {
             : `editing panel ${activePanel + 1} only`}
         </span>
       </label>
+      {/* Only meaningful once the panels can differ. */}
+      {!linkSettings && <PushSettingsButton />}
     </div>
+  );
+}
+
+/**
+ * One-shot copy of the active panel's settings onto the other.
+ *
+ * The explicit half of the original request: explore either side, then force
+ * the other to match. Unlike re-linking, the panels stay independent after, so
+ * you can push a baseline across and then diverge again from it.
+ *
+ * Settings naming a column, gene or mechanism the target does not have are
+ * dropped before writing — see sanitiseSettings. That check is here rather than
+ * in the store because the column names come from /cells/schema and
+ * /edges/schema, which the store never fetches.
+ */
+function PushSettingsButton() {
+  const apiBase = useStore((s) => s.apiBase);
+  const activePanel = useStore((s) => s.activePanel);
+  const panels = useStore((s) => s.panels);
+  const pushSettings = useStore((s) => s.pushSettings);
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+
+  const from = activePanel;
+  const to = activePanel === 0 ? 1 : 0;
+  const target = panels[to];
+
+  const run = async () => {
+    if (!target?.dataset) return;
+    setBusy(true);
+    const cols = async (url) => {
+      try {
+        const r = await fetch(url);
+        if (!r.ok) return null;
+        return new Set(Object.keys((await r.json())?.columns ?? {}));
+      } catch { return null; }
+    };
+    const ef = `?edge_file=${encodeURIComponent(target.edgeFile)}`;
+    const [cellFields, edgeFields] = await Promise.all([
+      cols(`${apiBase}/spatial/${target.dataset}/cells/schema`),
+      cols(`${apiBase}/edges/${target.dataset}/schema${ef}`),
+    ]);
+    pushSettings(from, to, {
+      cellFields,
+      edgeFields,
+      // Already in the store, per panel — no fetch needed.
+      genes: target.allGenes?.length ? new Set(target.allGenes) : null,
+      lrms: target.lrmCatalogue?.length
+        ? new Set(target.lrmCatalogue.map((e) => e.lrm ?? `${e.ligand}|${e.receptor}`))
+        : null,
+    });
+    setBusy(false);
+    setDone(true);
+    setTimeout(() => setDone(false), 1500);
+  };
+
+  return (
+    <button
+      onClick={run}
+      disabled={busy || !target?.dataset}
+      title={`Copy every display setting from panel ${from + 1} to panel ${to + 1}`}
+      style={{
+        marginTop: 6, width: "100%", padding: "3px 6px",
+        fontFamily: "monospace", fontSize: 11,
+        cursor: target?.dataset ? "pointer" : "default",
+        border: "1px solid #3a3a3a", borderRadius: 3,
+        background: "transparent", color: done ? "#8fd" : "#8af",
+      }}
+    >
+      {done ? "copied" : busy ? "copying…" : `copy panel ${from + 1} → panel ${to + 1}`}
+    </button>
   );
 }
 
