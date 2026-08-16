@@ -22,7 +22,6 @@ import pyarrow.parquet as pq
 from app.readers import duck, metadata_filter, supplemental
 from app.readers.metadata_filter import MetadataFilter
 
-_DUCKDB_MEMORY_LIMIT = os.getenv("DUCKDB_MEMORY_LIMIT", "8GB")
 
 
 _UNSET = object()
@@ -86,12 +85,22 @@ class EdgeReader:
         return f"read_parquet('{self._sql_path}')"
 
     def _conn(self):
-        # Each call gets a fresh, isolated connection — duckdb's default connection
-        # is not thread-safe and causes empty/corrupt results under FastAPI concurrency.
-        conn = duckdb.connect()
-        conn.execute(f"SET memory_limit='{_DUCKDB_MEMORY_LIMIT}'")
-        conn.execute("SET threads=4")
-        return conn
+        # Shared with the spatial readers via duck.connect(), which also gives a
+        # fresh isolated connection per call (duckdb's default connection is not
+        # thread-safe and returns empty or corrupt results under FastAPI's
+        # threadpool rather than raising).
+        #
+        # This used to build its own connection with
+        # `os.getenv("DUCKDB_MEMORY_LIMIT", "8GB")`. That default only applies
+        # when the variable is *absent*: set-but-empty returns "", so
+        # `SET memory_limit=''` raised a ParserException and every /edges
+        # endpoint 500'd. Compose sets it empty on purpose now, to let the limit
+        # be sized from available memory — so the two disagreed and edges stopped
+        # loading everywhere. Going through duck.connect() means there is one
+        # defaulting rule instead of two, and EdgeReader also picks up the
+        # temp_directory it never had, so a large edge query can spill instead of
+        # failing outright.
+        return duck.connect()
 
     def schema(self) -> dict:
         """Column names and dtypes, parquet columns plus any supplemental ones.

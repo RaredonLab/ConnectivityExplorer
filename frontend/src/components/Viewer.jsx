@@ -21,6 +21,7 @@ import { OrthographicView } from "@deck.gl/core";
 import { ScatterplotLayer, SolidPolygonLayer, PathLayer, LineLayer } from "@deck.gl/layers";
 
 import { useStore } from "../store";
+import { usePanelSettings, PanelIndexProvider } from "../hooks/usePanelSettings";
 import { useTranscripts } from "../hooks/useTranscripts";
 import { useCellBoundaries } from "../hooks/useCellBoundaries";
 import { useCellColors } from "../hooks/useCellColors";
@@ -139,9 +140,8 @@ function ViewerPanel({ panelIndex }) {
     annotationMode,
     clearZoomMatch,
     activeRegion, addRegionPoint, cancelActiveRegion, commitRegion,
-    regions, removeRegion,
-    measurements, addMeasurement,
-    clearAnnotations,
+    removeRegion,
+    addMeasurement,
     panelCount,
     transcriptFraction,
     cellBoundaryFraction,
@@ -149,7 +149,7 @@ function ViewerPanel({ panelIndex }) {
     panelRotations, setPanelRotation,
     selection, setSelectedCell, setSelectedEdge,
     patchPanel,
-  } = useStore();
+  } = usePanelSettings(panelIndex);
 
   // ── This panel's dataset-bound state ──────────────────────────────────────
   // Everything derived from *which dataset this panel shows*: image dimensions,
@@ -173,6 +173,21 @@ function ViewerPanel({ panelIndex }) {
 
   // Per-panel viewport from store
   const viewport = useStore((s) => s.viewports[panelIndex]);
+
+  // Annotations belong to the panel that drew them. Subscribe to the raw arrays
+  // so a change re-renders, then narrow — the selectors on the store are plain
+  // functions and would not themselves trigger an update.
+  const allRegions = useStore((s) => s.regions);
+  const allMeasurements = useStore((s) => s.measurements);
+  const activeRegionPanel = useStore((s) => s.activeRegionPanel);
+  const regions = useMemo(
+    () => allRegions.filter((r) => (r.panelIndex ?? 0) === panelIndex),
+    [allRegions, panelIndex]);
+  const measurements = useMemo(
+    () => allMeasurements.filter((m) => (m.panelIndex ?? 0) === panelIndex),
+    [allMeasurements, panelIndex]);
+  // The in-progress outline is only drawn by the panel actually drawing it.
+  const drawingHere = activeRegionPanel === null || activeRegionPanel === panelIndex;
 
   // Zoom-match signal — fired when the Match button is clicked in either panel
   const pendingZoomMatch = useStore((s) => s.pendingZoomMatch);
@@ -514,7 +529,7 @@ function ViewerPanel({ panelIndex }) {
     const pt = screenToData(sx, sy);
     if (!pt) return;
     if (annotationMode === "region") {
-      addRegionPoint(pt);
+      addRegionPoint(pt, panelIndex);
     } else if (annotationMode === "measure") {
       if (!measureFirstRef.current) {
         measureFirstRef.current = pt;
@@ -523,11 +538,11 @@ function ViewerPanel({ panelIndex }) {
         const p2 = pt;
         const dx = p2[0] - p1[0], dy = p2[1] - p1[1];
         const distPx = Math.sqrt(dx * dx + dy * dy);
-        addMeasurement({ id: Date.now(), p1, p2, distPx });
+        addMeasurement({ id: Date.now(), p1, p2, distPx }, panelIndex);
         measureFirstRef.current = null;
       }
     }
-  }, [annotationMode, addRegionPoint, addMeasurement, screenToData]);
+  }, [annotationMode, addRegionPoint, addMeasurement, screenToData, panelIndex]);
 
   const handleOverlayClick = useCallback((e) => {
     if (annotationMode === "pan") return;
@@ -565,8 +580,8 @@ function ViewerPanel({ panelIndex }) {
       [80, 255, 120], [255, 120, 60], [180, 100, 255],
     ];
     const color = PALETTE[regions.length % PALETTE.length];
-    commitRegion({ id: Date.now(), points: poly, selectedCellIds, color });
-  }, [annotationMode, activeRegion, cancelActiveRegion, commitRegion, regions]);
+    commitRegion({ id: Date.now(), points: poly, selectedCellIds, color }, panelIndex);
+  }, [annotationMode, activeRegion, cancelActiveRegion, commitRegion, regions, panelIndex]);
 
   // ── Data fetching ─────────────────────────────────────────────────────────
   const transcriptsVisible = layerState.transcripts?.visible ?? true;
@@ -945,9 +960,12 @@ function ViewerPanel({ panelIndex }) {
       pickable: false,
     })
   );
-  const activePts = cursorPos && activeRegion.length > 0
-    ? [...activeRegion, cursorPos]
-    : activeRegion;
+  // Empty unless this panel is the one drawing, so the dashed outline and its
+  // vertex markers do not shadow the other panel while a polygon is in progress.
+  const ownActiveRegion = drawingHere ? activeRegion : [];
+  const activePts = cursorPos && ownActiveRegion.length > 0
+    ? [...ownActiveRegion, cursorPos]
+    : ownActiveRegion;
   const activeRegionLayer = new PathLayer({
     id: "active-region",
     data: activePts.length > 1 ? [activePts] : [],
@@ -962,7 +980,7 @@ function ViewerPanel({ panelIndex }) {
   });
   const activeVertexLayer = new ScatterplotLayer({
     id: "active-vertices",
-    data: activeRegion,
+    data: ownActiveRegion,
     modelMatrix: rotModelMatrix,
     getPosition: (d) => d,
     getRadius: 4,

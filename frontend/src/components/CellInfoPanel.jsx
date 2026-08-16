@@ -4,13 +4,21 @@
  */
 import React, { useEffect, useState } from "react";
 import { useStore } from "../store";
+import { usePanelSettings } from "../hooks/usePanelSettings";
 
 const ROW = { display: "flex", justifyContent: "space-between", marginBottom: 3 };
 const KEY = { color: "#666" };
 const VAL = { color: "#ccc", textAlign: "right", marginLeft: 8, wordBreak: "break-all" };
 
 export default function CellInfoPanel() {
-  const { apiBase, colorBy, cellColorEnabled, selectedGenes, selection } = useStore();
+  const apiBase = useStore((s) => s.apiBase);
+  const selection = useStore((s) => s.selection);
+  // Colour-by settings come from the panel that produced the click, not the tab
+  // the sidebar happens to be on. Identical while the panels are linked; with
+  // them unlinked, the active panel's gene selection would describe the wrong
+  // cell.
+  const { colorBy, cellColorEnabled, selectedGenes } =
+    usePanelSettings(selection?.panelIndex ?? null);
   // Resolve against the panel that produced the click, not panel 0 — with two
   // datasets on screen, panel 0's would be the wrong one half the time.
   const selectedCell = selection?.kind === "cell" ? selection.cell : null;

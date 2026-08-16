@@ -203,6 +203,9 @@ docs/
   cloud-deploy.md            DigitalOcean deployment runbook (~$106–116/mo)
   public_datasets.md         Public datasets used for development, and the classic
                              Visium pair the reader was verified against
+  split_screen_phase2.md     Spec for making panel *settings* per-panel. Phase 1
+                             (per-panel datasets) shipped in v0.8.4; this is what
+                             remains. Read before touching store.js's shared state.
   index.html                 The user manual, published to GitHub Pages at
                              https://raredonlab.github.io/TissuePlex/ — hand-written
                              HTML, no build step. Update it when a UI control changes.
@@ -368,12 +371,14 @@ param (e.g. `"edges/edge.raw.minimum.parquet"`); `label` is the display name
 `(dataset, edge_file)`. `_reader()` resolves `edge_file` under the dataset directory
 and rejects anything that escapes it (path-traversal guard → 400; missing file → 404).
 
-**Frontend** — a single global `edgeFile` in the store applies to **all** open viewer
-panels (see the Split-Screen note; a per-panel edge file was deliberately deferred
-because LRM catalogue / color ranges are edge-file-specific and the sidebar is shared).
-The picker is a `<select>` at the top of the Edge Data section in `LayerPanel.jsx`,
-shown only when the dataset has >1 edge file. `setEdgeFile` and `setDataset` both
-reset the edge-file-scoped state (`lrmCatalogue`, `hiddenLrms`, `selectedEdge`,
+**Frontend** — `edgeFile` is **per panel** (`panels[i].edgeFile`), so two panels can
+compare two edge sources. It was global until v0.8.4; the deferral recorded here
+(LRM catalogue and colour ranges are edge-file-specific, and one sidebar cannot drive
+two of them) was resolved by Phase 1 of the split-screen work, which moved every
+dataset-bound value into `panels[i]`. In split mode the picker sits in each panel's
+header via `DatasetPicker`; in single-panel mode it stays in the Edge Data section of
+`LayerPanel.jsx`. Either way it is shown only when the dataset has >1 edge file.
+`setPanelEdgeFile` and `setPanelDataset` both reset the edge-file-scoped state (`lrmCatalogue`, `hiddenLrms`, `selectedEdge`,
 `edgeColorRange`, `edgeColorClamp`) so stale LRM/color state from the previous file
 never leaks. `edgeFile` is threaded as `?edge_file=…` through all six edge fetch
 sites: `useEdges` (query-grouped, query-scores), `useEdgeColors` (edge-color-values),
@@ -388,9 +393,9 @@ All shared state lives in a single Zustand store. Key sections:
 
 - **Dataset / image**: `dataset` (null on init, auto-set from `/spatial/datasets`),
   `activeImage` (which OME-TIFF to show; auto-set from `/spatial/{dataset}/images`)
-- **Edge file**: `edgeFile` (default `"edges.parquet"`) — which edge-source parquet to
-  render; global (applies to all panels). `setEdgeFile` / `setDataset` reset the
-  edge-file-scoped state. See "Multiple Edge Files" above.
+- **Edge file**: `panels[i].edgeFile` (default `"edges.parquet"`) — which edge-source
+  parquet that panel renders. Per-panel since v0.8.4. `setPanelEdgeFile` /
+  `setPanelDataset` reset the edge-file-scoped state. See "Multiple Edge Files" above.
 - **Layer visibility**: `layers` object — each layer has `visible` + `opacity`;
   `cellSegments` also has `outlineOpacity` (independent from fill opacity)
 - **Cell color**: `cellColorEnabled`, `colorBy` (`mode`: off/gene_set/metadata, `field`),
@@ -564,8 +569,14 @@ dataset a panel shows* lives in `panels[panelIndex]` (store.js `makePanel()`):
 stats. Each of those differs between datasets, so none of them can be global.
 
 Style and choice settings — layer opacity, palettes, colour-by, filters, LRM
-selection, edge geometry — deliberately stay **shared**: one sidebar drives both
-panels, which is what makes a side-by-side comparison comparable. The sidebar
+selection, edge geometry — are **shared by default** and can be unlinked per
+panel from the sidebar tabs (Phase 2a/2b). One sidebar driving both panels is
+what makes a side-by-side comparison comparable, so linked stays the default.
+A `copy panel N → panel M` button under the toggle pushes one panel's settings
+onto the other in one shot, dropping any that name a column, gene or mechanism
+the target dataset lacks — an inherited filter on a missing column 400s on every
+viewport change and the panel silently stops rendering. See
+`docs/split_screen_phase2.md`; only the docs pass (2e) remains. The sidebar
 reconciles across panels with `hooks/usePanels.js`, whose rule is **union, then
 degrade per panel**: offer a control if *either* panel can use it, and let the
 panel that cannot render nothing. Intersecting instead would hide controls that
@@ -577,11 +588,10 @@ Consequences worth knowing:
 - **The dataset / image / edge-source pickers move into each panel's header** in
   split mode, because an image name or edge file only means something relative to
   one dataset. In single-panel mode they stay in the sidebar, unchanged.
-- **Changing either panel's dataset resets the shared column-, gene- and
-  mechanism-named settings** (filters, colour-by field, gene allowlist, hidden
-  LRMs). It has to: a filter naming a column the new dataset lacks 400s on every
-  viewport change. The cost is that switching one panel clears the other's
-  filter. That goes away when these become per-panel.
+- **Changing a panel's dataset resets its column-, gene- and mechanism-named
+  settings** (filters, colour-by field, gene allowlist, hidden LRMs). It has to:
+  a filter naming a column the new dataset lacks 400s on every viewport change.
+  The other panel is reset too only while `linkSettings` is on.
 - **Selection carries its panel index** (`selection = {panelIndex, kind, …}`), so
   `CellInfoPanel` / `EdgeInfoPanel` and region export resolve against the dataset
   that was actually clicked. `EdgeInfoPanel` used to be pinned to panel 0.
@@ -608,12 +618,51 @@ Consequences worth knowing:
   `imageSize.w` changed (fixes the bug where morphology stayed visible after
   dataset switches with same-dimension images, and in panel 2 on first open)
 
+**Annotations belong to the panel that drew them.** `regions` and `measurements`
+each carry a `panelIndex`, and `ViewerPanel` renders only its own. This is not
+cosmetic: coordinates are image pixels of *that panel's* dataset, so a polygon
+over a 6.5 mm Visium capture area reappearing in a 55 µm seqFISH panel lands
+nowhere meaningful. Two consequences were worse because they were silent — CSV
+export resolves `selectedCellIds` against `panels[r.panelIndex].dataset` (it read
+that field before anything wrote it, so every export used panel 0), and a
+measurement label is `distPx * pixelSize` for its own panel (a 100 px line reads
+100 µm on CosMx and 10.8 µm on MERSCOPE). `clearAnnotations(panelIndex)` is
+likewise scoped, since the button lives in each panel's own toolbar; omitting the
+index still clears everything. Anything created before this carries no
+`panelIndex` and is treated as panel 0.
+
+**Display settings live in `panels[i].settings`, not at the store root** (Phase 2a).
+`makeSettings()` builds them — a factory, not a constant, because `layers` and
+`hiddenLrms` are containers and sharing one object across panels would alias them.
+Reads go through `usePanelSettings()` (`hooks/usePanelSettings.js`), which returns the
+store merged with one panel's settings; the panel comes from `PanelIndexContext`, or is
+passed explicitly by `ViewerPanel`, which already knows its index. Writes go through
+`patchSettings(patch, panelIndex = null)` — a null index writes to **every** panel, which
+is what keeps one sidebar driving both and makes 2a behaviour-identical to the global
+state it replaced. `linkSettings` (default true) and `activePanel` decide where a write lands: all panels
+when linked, the active tab when not. `patchSettings` is the single place that decision
+is made, so no setter knows about tabs. `getSetting` reads the *active* panel, which
+read-modify-write setters depend on — unlinked, `toggleLrm` must toggle against the panel
+it is about to write, not panel 0.
+
+Re-linking (`setLinkSettings(true)`) makes every panel adopt the active panel's settings
+via `cloneSettings`, rather than just resuming propagation: a control labelled "linked"
+over two visibly different panels would not be telling the truth, and a shallow copy would
+leave the panels aliasing so the next unlinked edit wrote through to both.
+
+Note `setPanelDataset` resets only the *name-bound* settings (filters, colour-by, gene
+allowlist, hidden LRMs). Geometry, palettes and layer visibility survive a dataset change
+and always have — rebuilding the panel from `makePanel()` would silently wipe them.
+
+The reset always reaches the panel that changed, and the **other** panels only while
+linked. Unlinked, reaching across would contradict the toggle: the sidebar says "editing
+panel 1 only" while an action on panel 2 clears panel 1. That was the cost recorded here
+before v0.8.5, and the link toggle is what made it fixable.
+
 **What is shared (global store):**
 - All layer toggles, opacities, color-by settings, LRM filter, edge density, etc.
-- `edgeFile` — the selected edge-source parquet applies to both panels. A per-panel
-  edge file was deferred (issue #46 discussion): LRM catalogue + color ranges are
-  edge-file-specific, and the single sidebar can't drive two different edge sets
-  equally. Revisit if side-by-side comparison of different edge files is needed.
+- `edgeFile` is **not** shared — it moved to `panels[i]` in Phase 1, along with the
+  LRM catalogue and colour ranges that made sharing it incoherent.
 - `selectedCell`, `selectedEdge` (global — EdgeInfoPanel only renders in panel 0)
 - `imageSize` (both panels open the same DZI; panel 0 sets it, panel 1 may also set
   the same values redundantly — harmless)
@@ -1295,6 +1344,17 @@ Datasets absent from a checkout are skipped, so it works with only the committed
 Two determinism rules keep it honest: record-list digests are order-independent (because
 `query_grouped` uses `ORDER BY RANDOM()`), and sampling is seeded (`duck.SAMPLE_SEED`).
 If a probe changes and you cannot explain why, that is the point of the tool.
+
+**Frontend tests** run under Vitest, added with the annotation fix in v0.8.5:
+
+```bash
+cd frontend && npm test        # vitest run
+cd frontend && npm run test:watch
+```
+
+`src/store.annotations.test.js` is the first of them. Store logic is plain JS, so
+these need no DOM and no jsdom dependency — reducers can be exercised directly
+through `useStore.getState()`. Coverage is currently annotations only.
 
 There is still **no CI and no linter** — no `.github/workflows`, no ESLint or Python lint
 config. The snapshot is a guard, not a test suite: it catches "this changed" but does not

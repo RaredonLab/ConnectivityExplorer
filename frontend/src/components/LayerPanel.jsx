@@ -3,6 +3,7 @@
  */
 import React, { useEffect, useRef, useState } from "react";
 import { useStore } from "../store";
+import { usePanelSettings } from "../hooks/usePanelSettings";
 import { useActiveDatasets, useActivePanels, useUnionCapabilities, useUnionList } from "../hooks/usePanels";
 import { DatasetPicker } from "./DatasetPicker";
 import { APP_VERSION } from "../App";
@@ -105,6 +106,7 @@ export default function LayerPanel() {
           Comparing {panelCount} panels — pick each dataset in its header
         </div>
       )}
+      {panelCount >= 2 && <PanelTabs />}
       <div style={{ fontWeight: "bold", marginBottom: 10, fontSize: 13, color: "#fff" }}>Layers</div>
 
       <div style={SECTION_HEADER}>Core</div>
@@ -195,7 +197,7 @@ function ColorBySection({ unitLabel = "cell" }) {
     selectedGenes,
     cellColorClamp, setCellColorClamp,
     categoricalOverrides, setCategoricalOverride,
-  } = useStore();
+  } = usePanelSettings();
 
   // Genes and metadata columns are unioned across the visible panels, so a
   // column that exists only in panel 1 is still selectable. A panel that lacks
@@ -413,7 +415,7 @@ function CategoricalLegend({ field, categories = [] }) {
     setCategoryColorOverride,
     mergeCategoryColorOverrides,
     resetCategoryColorOverrides,
-  } = useStore();
+  } = usePanelSettings();
 
   const fileInputRef = useRef(null);
 
@@ -708,7 +710,7 @@ function fmtBound(v) {
 }
 
 function CellFilterSection({ unitLabel = "cell" }) {
-  const { apiBase, cellFilter, setCellFilter, categoricalOverrides } = useStore();
+  const { apiBase, cellFilter, setCellFilter, categoricalOverrides } = usePanelSettings();
   const datasets = useActiveDatasets();
   const columns = useUnionList((d) =>
     fetch(`${apiBase}/spatial/${d}/cells/schema`)
@@ -739,7 +741,7 @@ function CellFilterSection({ unitLabel = "cell" }) {
 }
 
 function EdgeFilterSection() {
-  const { apiBase, edgeFilter, setEdgeFilter, categoricalOverrides } = useStore();
+  const { apiBase, edgeFilter, setEdgeFilter, categoricalOverrides } = usePanelSettings();
   const active = useActivePanels();
   const [columns, setColumns] = useState([]);
   const sources = active.filter((p) => p.dataset)
@@ -791,8 +793,142 @@ const EDGE_FILTER_SKIP = new Set([
  * Shown only in split mode. Default on, because independent auto-ranging makes
  * two panels look comparable when they are not — see the store comment.
  */
+/**
+ * Which panel the sidebar edits, and whether edits reach both.
+ *
+ * Split mode only. The tabs also select which panel's values the controls
+ * *display* — unlinked, showing a blend or always panel 0's would make the
+ * sliders lie about the panel you are editing.
+ *
+ * Linked is the default and is the pre-2b behaviour. Switching it back on
+ * re-syncs both panels to the tab you are on, because a control labelled
+ * "linked" over two visibly different panels would not be telling the truth.
+ */
+function PanelTabs() {
+  const { activePanel, setActivePanel, linkSettings, setLinkSettings, panels } =
+    useStore();
+
+  const tab = (i) => {
+    const on = activePanel === i;
+    const name = panels[i]?.dataset;
+    return (
+      <button
+        key={i}
+        onClick={() => setActivePanel(i)}
+        title={name ? `Edit panel ${i + 1} — ${name}` : `Edit panel ${i + 1}`}
+        style={{
+          flex: 1, padding: "3px 6px", fontFamily: "monospace", fontSize: 11,
+          cursor: "pointer", borderRadius: 3,
+          border: `1px solid ${on ? "#5a8" : "#3a3a3a"}`,
+          background: on ? "#2b3a33" : "transparent",
+          color: on ? "#8fd" : "#888",
+        }}
+      >
+        Panel {i + 1}
+      </button>
+    );
+  };
+
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ display: "flex", gap: 4, marginBottom: 4 }}>
+        {tab(0)}
+        {tab(1)}
+      </div>
+      <label style={{
+        display: "flex", alignItems: "center", gap: 6,
+        fontSize: 11, color: linkSettings ? "#8fd" : "#888", cursor: "pointer",
+      }}>
+        <input
+          type="checkbox"
+          checked={linkSettings}
+          onChange={(e) => setLinkSettings(e.target.checked)}
+        />
+        <span>
+          {linkSettings
+            ? "settings linked — edits apply to both panels"
+            : `editing panel ${activePanel + 1} only`}
+        </span>
+      </label>
+      {/* Only meaningful once the panels can differ. */}
+      {!linkSettings && <PushSettingsButton />}
+    </div>
+  );
+}
+
+/**
+ * One-shot copy of the active panel's settings onto the other.
+ *
+ * The explicit half of the original request: explore either side, then force
+ * the other to match. Unlike re-linking, the panels stay independent after, so
+ * you can push a baseline across and then diverge again from it.
+ *
+ * Settings naming a column, gene or mechanism the target does not have are
+ * dropped before writing — see sanitiseSettings. That check is here rather than
+ * in the store because the column names come from /cells/schema and
+ * /edges/schema, which the store never fetches.
+ */
+function PushSettingsButton() {
+  const apiBase = useStore((s) => s.apiBase);
+  const activePanel = useStore((s) => s.activePanel);
+  const panels = useStore((s) => s.panels);
+  const pushSettings = useStore((s) => s.pushSettings);
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+
+  const from = activePanel;
+  const to = activePanel === 0 ? 1 : 0;
+  const target = panels[to];
+
+  const run = async () => {
+    if (!target?.dataset) return;
+    setBusy(true);
+    const cols = async (url) => {
+      try {
+        const r = await fetch(url);
+        if (!r.ok) return null;
+        return new Set(Object.keys((await r.json())?.columns ?? {}));
+      } catch { return null; }
+    };
+    const ef = `?edge_file=${encodeURIComponent(target.edgeFile)}`;
+    const [cellFields, edgeFields] = await Promise.all([
+      cols(`${apiBase}/spatial/${target.dataset}/cells/schema`),
+      cols(`${apiBase}/edges/${target.dataset}/schema${ef}`),
+    ]);
+    pushSettings(from, to, {
+      cellFields,
+      edgeFields,
+      // Already in the store, per panel — no fetch needed.
+      genes: target.allGenes?.length ? new Set(target.allGenes) : null,
+      lrms: target.lrmCatalogue?.length
+        ? new Set(target.lrmCatalogue.map((e) => e.lrm ?? `${e.ligand}|${e.receptor}`))
+        : null,
+    });
+    setBusy(false);
+    setDone(true);
+    setTimeout(() => setDone(false), 1500);
+  };
+
+  return (
+    <button
+      onClick={run}
+      disabled={busy || !target?.dataset}
+      title={`Copy every display setting from panel ${from + 1} to panel ${to + 1}`}
+      style={{
+        marginTop: 6, width: "100%", padding: "3px 6px",
+        fontFamily: "monospace", fontSize: 11,
+        cursor: target?.dataset ? "pointer" : "default",
+        border: "1px solid #3a3a3a", borderRadius: 3,
+        background: "transparent", color: done ? "#8fd" : "#8af",
+      }}
+    >
+      {done ? "copied" : busy ? "copying…" : `copy panel ${from + 1} → panel ${to + 1}`}
+    </button>
+  );
+}
+
 function LinkColorScaleRow() {
-  const { linkColorScale, setLinkColorScale } = useStore();
+  const { linkColorScale, setLinkColorScale } = usePanelSettings();
   return (
     <label style={{ ...LABEL_STYLE, marginBottom: 8, fontSize: 10, color: "#888" }}
            title="Both panels map through one colour range, so the legend is true for both">
@@ -818,7 +954,7 @@ function useSummedStat(key) {
 
 // ── Morphology row ────────────────────────────────────────────────────────────
 function MorphologyRow() {
-  const { layers, setLayerProp } = useStore();
+  const { layers, setLayerProp } = usePanelSettings();
   const state = layers.morphology ?? { visible: true, opacity: 1.0 };
   return (
     <LayerRowBase
@@ -831,7 +967,7 @@ function MorphologyRow() {
 }
 
 function LayerRow({ id, label, color }) {
-  const { layers, setLayerProp } = useStore();
+  const { layers, setLayerProp } = usePanelSettings();
   const state = layers[id] ?? { visible: true, opacity: 0.8 };
   return (
     <LayerRowBase
@@ -876,7 +1012,7 @@ function LayerRowBase({ label, color, visible, opacity, onToggle, onOpacity }) {
 }
 
 function TranscriptLayerRow() {
-  const { layers, setLayerProp, transcriptFraction, setTranscriptFraction } = useStore();
+  const { layers, setLayerProp, transcriptFraction, setTranscriptFraction } = usePanelSettings();
   // Summed across the visible panels: with two datasets, "how much is on
   // screen" is the total of both, and one number is less noise than two.
   const transcriptStats = useSummedStat("transcriptStats");
@@ -943,7 +1079,7 @@ function CellSegmentsRow({ unitTitle = "Cell" }) {
   const {
     layers, setLayerProp,
     cellBoundaryFraction, setCellBoundaryFraction,
-  } = useStore();
+  } = usePanelSettings();
   const cellBoundaryStats = useSummedStat("cellBoundaryStats");
   const state = layers.cellSegments ?? { visible: true, opacity: 0.6, outlineOpacity: 0.8 };
   const { shown, total } = cellBoundaryStats;
@@ -1037,7 +1173,7 @@ function TranscriptSpeciesSection() {
     selectedGenes, setSelectedGenes, toggleSelectedGene,
     transcriptColorOverrides, setTranscriptColorOverride,
     mergeTranscriptColorOverrides, resetTranscriptColorOverrides,
-  } = useStore();
+  } = usePanelSettings();
   const apiBase = useStore((s) => s.apiBase);
   const datasets = useActiveDatasets();
   // Union across panels: a 960-gene CosMx panel beside a 130-gene MERSCOPE one
@@ -1245,7 +1381,7 @@ const CHIP_STYLE = {
 
 // ── Density row (top-level — applies to tissue graph + edge data) ─────────────
 function DensityRow() {
-  const { edgeDensity, setEdgeDensity } = useStore();
+  const { edgeDensity, setEdgeDensity } = usePanelSettings();
   return (
     <div style={{ marginBottom: 8 }}>
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#555", marginBottom: 2 }}>
@@ -1264,7 +1400,7 @@ function DensityRow() {
 
 // ── Tissue graph section ──────────────────────────────────────────────────────
 function TissueGraphSection() {
-  const { layers, setLayerProp } = useStore();
+  const { layers, setLayerProp } = usePanelSettings();
   const state = layers.tissueGraph ?? { visible: true, opacity: 0.25 };
   return (
     <div style={{ marginBottom: 8 }}>
@@ -1303,7 +1439,7 @@ function EdgeSection() {
     hiddenLrms, toggleLrm, setAllLrmsVisible, hideAllLrms,
     edgeColorClamp, setEdgeColorClamp,
     categoricalOverrides, setCategoricalOverride,
-  } = useStore();
+  } = usePanelSettings();
   const active = useActivePanels();
   const state = layers.edges ?? { visible: true, opacity: 0.9 };
   const [localStrength, setLocalStrength] = useState(edgeMinStrength ?? 0);
@@ -1687,11 +1823,12 @@ function EdgeCategoricalLegend({ categories = [] }) {
 }
 
 function RegionsSection() {
-  const { apiBase, regions, removeRegion } = useStore();
+  const { apiBase, regions, removeRegion } = usePanelSettings();
   // Regions are drawn in one panel's image space, so export resolves against
   // that panel's dataset. Older regions carry no panelIndex; treat them as
   // panel 0, which is where they could only have come from.
   const panels = useStore((s) => s.panels);
+  const panelCount = useStore((s) => s.panelCount);
   if (regions.length === 0) return null;
 
   const exportRegion = async (region) => {
@@ -1723,6 +1860,12 @@ function RegionsSection() {
             <div style={{ width: 10, height: 10, borderRadius: 2, background: swatch, flexShrink: 0 }} />
             <span style={{ flex: 1, fontSize: 11, color: "#aaa" }}>
               {r.selectedCellIds.length} cells
+              {/* The sidebar is shared, so in split mode a bare cell count does
+                  not say which tissue it came from — and the two panels may be
+                  different datasets entirely. */}
+              {panelCount >= 2 && (
+                <span style={{ color: "#666" }}> · panel {(r.panelIndex ?? 0) + 1}</span>
+              )}
             </span>
             <button
               title="Export cells as CSV"
