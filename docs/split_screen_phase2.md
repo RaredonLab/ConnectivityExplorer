@@ -138,18 +138,23 @@ and the destructuring below it is untouched.
 
 Each stage is independently reviewable and leaves the app working.
 
-**2a — container and hook, behaviour frozen.** Move the ~30 keys into
-`panels[i].settings`. Add `PanelSettingsContext`, `usePanelSettings()`, and a
-`setSetting(key, value)` that writes to every panel unconditionally. Convert the
-4 components. No UI change, no tabs, no link toggle.
+**2a — container and hook, behaviour frozen. DONE.** The ~30 keys live in
+`panels[i].settings`, built by `makeSettings()`. `hooks/usePanelSettings.js` adds
+`PanelIndexContext` and `usePanelSettings()`, which returns the store merged with
+that panel's settings — so the 17 call sites changed by one identifier and their
+destructuring was untouched. Every write goes through `patchSettings(patch,
+panelIndex = null)`, which with a null index writes to all panels. No UI change.
 
-*This stage must be provably behaviour-preserving* — that is its whole value. It
-is the large mechanical diff, landed while the observable behaviour is still
-"one sidebar drives both panels", so any regression is a bug in the refactor
-rather than an argument about intended semantics.
+Verified behaviour-preserving by capturing all 28 effective setting values before
+the change and diffing after: **no differences**. `store.settings.test.js` (13
+tests) pins the contract, including the one real regression risk — a dataset
+change must reset the name-bound settings *only*, since rebuilding the panel from
+`makePanel()` would also have wiped geometry, palettes and layer visibility,
+which a dataset change never touched.
 
 **2b — sidebar tabs and the link toggle.** Add `activePanel` and
-`linkSettings: true`. `setSetting` writes to all panels when linked, to
+`linkSettings: true`. `usePanelIndex` already falls back to `s.activePanel ?? 0`,
+so introducing the key is enough to make the sidebar follow the active tab. `setSetting` writes to all panels when linked, to
 `activePanel` when not. Tabs render only when `panelCount === 2`. Single-panel
 mode gets no tabs and writes to panel 0, so it is untouched.
 

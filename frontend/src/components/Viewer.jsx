@@ -21,6 +21,7 @@ import { OrthographicView } from "@deck.gl/core";
 import { ScatterplotLayer, SolidPolygonLayer, PathLayer, LineLayer } from "@deck.gl/layers";
 
 import { useStore } from "../store";
+import { usePanelSettings, PanelIndexProvider } from "../hooks/usePanelSettings";
 import { useTranscripts } from "../hooks/useTranscripts";
 import { useCellBoundaries } from "../hooks/useCellBoundaries";
 import { useCellColors } from "../hooks/useCellColors";
@@ -148,7 +149,7 @@ function ViewerPanel({ panelIndex }) {
     panelRotations, setPanelRotation,
     selection, setSelectedCell, setSelectedEdge,
     patchPanel,
-  } = useStore();
+  } = usePanelSettings(panelIndex);
 
   // ── This panel's dataset-bound state ──────────────────────────────────────
   // Everything derived from *which dataset this panel shows*: image dimensions,

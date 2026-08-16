@@ -628,6 +628,21 @@ likewise scoped, since the button lives in each panel's own toolbar; omitting th
 index still clears everything. Anything created before this carries no
 `panelIndex` and is treated as panel 0.
 
+**Display settings live in `panels[i].settings`, not at the store root** (Phase 2a).
+`makeSettings()` builds them — a factory, not a constant, because `layers` and
+`hiddenLrms` are containers and sharing one object across panels would alias them.
+Reads go through `usePanelSettings()` (`hooks/usePanelSettings.js`), which returns the
+store merged with one panel's settings; the panel comes from `PanelIndexContext`, or is
+passed explicitly by `ViewerPanel`, which already knows its index. Writes go through
+`patchSettings(patch, panelIndex = null)` — a null index writes to **every** panel, which
+is what keeps one sidebar driving both and makes 2a behaviour-identical to the global
+state it replaced. Phase 2b adds the link toggle that lets them diverge; `patchSettings`
+is the single place that decision will be made.
+
+Note `setPanelDataset` resets only the *name-bound* settings (filters, colour-by, gene
+allowlist, hidden LRMs). Geometry, palettes and layer visibility survive a dataset change
+and always have — rebuilding the panel from `makePanel()` would silently wipe them.
+
 **What is shared (global store):**
 - All layer toggles, opacities, color-by settings, LRM filter, edge density, etc.
 - `edgeFile` is **not** shared — it moved to `panels[i]` in Phase 1, along with the

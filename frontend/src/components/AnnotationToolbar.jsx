@@ -4,6 +4,7 @@
  */
 import React from "react";
 import { useStore } from "../store";
+import { usePanelSettings } from "../hooks/usePanelSettings";
 
 const MODES = [
   { id: "pan",    label: "Pan",        title: "Pan & zoom (default)" },
@@ -29,7 +30,7 @@ export default function AnnotationToolbar({ onScreenshot, panelIndex = 0 }) {
     panelCount, setPanelCount,
     requestZoomMatch,
     panelRotations, setPanelRotation,
-  } = useStore();
+  } = usePanelSettings();
 
   // Count and clear only this panel's own annotations: the toolbar is rendered
   // per panel, so a Clear here wiping the other panel's work would be a

@@ -3,6 +3,7 @@
  */
 import React, { useEffect, useRef, useState } from "react";
 import { useStore } from "../store";
+import { usePanelSettings } from "../hooks/usePanelSettings";
 import { useActiveDatasets, useActivePanels, useUnionCapabilities, useUnionList } from "../hooks/usePanels";
 import { DatasetPicker } from "./DatasetPicker";
 import { APP_VERSION } from "../App";
@@ -195,7 +196,7 @@ function ColorBySection({ unitLabel = "cell" }) {
     selectedGenes,
     cellColorClamp, setCellColorClamp,
     categoricalOverrides, setCategoricalOverride,
-  } = useStore();
+  } = usePanelSettings();
 
   // Genes and metadata columns are unioned across the visible panels, so a
   // column that exists only in panel 1 is still selectable. A panel that lacks
@@ -413,7 +414,7 @@ function CategoricalLegend({ field, categories = [] }) {
     setCategoryColorOverride,
     mergeCategoryColorOverrides,
     resetCategoryColorOverrides,
-  } = useStore();
+  } = usePanelSettings();
 
   const fileInputRef = useRef(null);
 
@@ -708,7 +709,7 @@ function fmtBound(v) {
 }
 
 function CellFilterSection({ unitLabel = "cell" }) {
-  const { apiBase, cellFilter, setCellFilter, categoricalOverrides } = useStore();
+  const { apiBase, cellFilter, setCellFilter, categoricalOverrides } = usePanelSettings();
   const datasets = useActiveDatasets();
   const columns = useUnionList((d) =>
     fetch(`${apiBase}/spatial/${d}/cells/schema`)
@@ -739,7 +740,7 @@ function CellFilterSection({ unitLabel = "cell" }) {
 }
 
 function EdgeFilterSection() {
-  const { apiBase, edgeFilter, setEdgeFilter, categoricalOverrides } = useStore();
+  const { apiBase, edgeFilter, setEdgeFilter, categoricalOverrides } = usePanelSettings();
   const active = useActivePanels();
   const [columns, setColumns] = useState([]);
   const sources = active.filter((p) => p.dataset)
@@ -792,7 +793,7 @@ const EDGE_FILTER_SKIP = new Set([
  * two panels look comparable when they are not — see the store comment.
  */
 function LinkColorScaleRow() {
-  const { linkColorScale, setLinkColorScale } = useStore();
+  const { linkColorScale, setLinkColorScale } = usePanelSettings();
   return (
     <label style={{ ...LABEL_STYLE, marginBottom: 8, fontSize: 10, color: "#888" }}
            title="Both panels map through one colour range, so the legend is true for both">
@@ -818,7 +819,7 @@ function useSummedStat(key) {
 
 // ── Morphology row ────────────────────────────────────────────────────────────
 function MorphologyRow() {
-  const { layers, setLayerProp } = useStore();
+  const { layers, setLayerProp } = usePanelSettings();
   const state = layers.morphology ?? { visible: true, opacity: 1.0 };
   return (
     <LayerRowBase
@@ -831,7 +832,7 @@ function MorphologyRow() {
 }
 
 function LayerRow({ id, label, color }) {
-  const { layers, setLayerProp } = useStore();
+  const { layers, setLayerProp } = usePanelSettings();
   const state = layers[id] ?? { visible: true, opacity: 0.8 };
   return (
     <LayerRowBase
@@ -876,7 +877,7 @@ function LayerRowBase({ label, color, visible, opacity, onToggle, onOpacity }) {
 }
 
 function TranscriptLayerRow() {
-  const { layers, setLayerProp, transcriptFraction, setTranscriptFraction } = useStore();
+  const { layers, setLayerProp, transcriptFraction, setTranscriptFraction } = usePanelSettings();
   // Summed across the visible panels: with two datasets, "how much is on
   // screen" is the total of both, and one number is less noise than two.
   const transcriptStats = useSummedStat("transcriptStats");
@@ -943,7 +944,7 @@ function CellSegmentsRow({ unitTitle = "Cell" }) {
   const {
     layers, setLayerProp,
     cellBoundaryFraction, setCellBoundaryFraction,
-  } = useStore();
+  } = usePanelSettings();
   const cellBoundaryStats = useSummedStat("cellBoundaryStats");
   const state = layers.cellSegments ?? { visible: true, opacity: 0.6, outlineOpacity: 0.8 };
   const { shown, total } = cellBoundaryStats;
@@ -1037,7 +1038,7 @@ function TranscriptSpeciesSection() {
     selectedGenes, setSelectedGenes, toggleSelectedGene,
     transcriptColorOverrides, setTranscriptColorOverride,
     mergeTranscriptColorOverrides, resetTranscriptColorOverrides,
-  } = useStore();
+  } = usePanelSettings();
   const apiBase = useStore((s) => s.apiBase);
   const datasets = useActiveDatasets();
   // Union across panels: a 960-gene CosMx panel beside a 130-gene MERSCOPE one
@@ -1245,7 +1246,7 @@ const CHIP_STYLE = {
 
 // ── Density row (top-level — applies to tissue graph + edge data) ─────────────
 function DensityRow() {
-  const { edgeDensity, setEdgeDensity } = useStore();
+  const { edgeDensity, setEdgeDensity } = usePanelSettings();
   return (
     <div style={{ marginBottom: 8 }}>
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#555", marginBottom: 2 }}>
@@ -1264,7 +1265,7 @@ function DensityRow() {
 
 // ── Tissue graph section ──────────────────────────────────────────────────────
 function TissueGraphSection() {
-  const { layers, setLayerProp } = useStore();
+  const { layers, setLayerProp } = usePanelSettings();
   const state = layers.tissueGraph ?? { visible: true, opacity: 0.25 };
   return (
     <div style={{ marginBottom: 8 }}>
@@ -1303,7 +1304,7 @@ function EdgeSection() {
     hiddenLrms, toggleLrm, setAllLrmsVisible, hideAllLrms,
     edgeColorClamp, setEdgeColorClamp,
     categoricalOverrides, setCategoricalOverride,
-  } = useStore();
+  } = usePanelSettings();
   const active = useActivePanels();
   const state = layers.edges ?? { visible: true, opacity: 0.9 };
   const [localStrength, setLocalStrength] = useState(edgeMinStrength ?? 0);
@@ -1687,7 +1688,7 @@ function EdgeCategoricalLegend({ categories = [] }) {
 }
 
 function RegionsSection() {
-  const { apiBase, regions, removeRegion } = useStore();
+  const { apiBase, regions, removeRegion } = usePanelSettings();
   // Regions are drawn in one panel's image space, so export resolves against
   // that panel's dataset. Older regions carry no panelIndex; treat them as
   // panel 0, which is where they could only have come from.
