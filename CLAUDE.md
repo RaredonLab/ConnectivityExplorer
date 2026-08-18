@@ -204,8 +204,12 @@ docs/
   public_datasets.md         Public datasets used for development, and the classic
                              Visium pair the reader was verified against
   split_screen_phase2.md     Spec for making panel *settings* per-panel. Phase 1
-                             (per-panel datasets) shipped in v0.8.4; this is what
-                             remains. Read before touching store.js's shared state.
+                             (per-panel datasets) shipped in v0.8.4; stages 2a–2e
+                             shipped in v0.8.5. Kept as the design record.
+  edge_filter_independence.md  Plan for issue #59. Decouples the tissue graph and
+                             the cell filter from edge filtering, then adds
+                             independent sending/receiving filters. Not started —
+                             read before touching the edge filter path.
   index.html                 The user manual, published to GitHub Pages at
                              https://raredonlab.github.io/TissuePlex/ — hand-written
                              HTML, no build step. Update it when a UI control changes.
@@ -1221,6 +1225,13 @@ subset renders at full density.
   to a cell that is not drawn. `edge_filter` becomes a real SQL predicate when the
   column is in the parquet, and a semi-join against a registered frame when it comes
   from `edge-metadata/`.
+
+  **The both-endpoints rule is slated to be reversed.** The lab's position is that
+  cell and edge filtration should be completely independent, and that the tissue
+  graph is ground truth that filtering must never subset — today one `useEdges`
+  request feeds both the graph and the edge layer, so both couplings are live. See
+  `docs/edge_filter_independence.md` (issue #59). The reasoning above is the decision
+  being reversed, kept because it explains what the code currently does.
 
 **Large id sets go through `duck.register_ids()`, not `IN (?, ?, …)`.** A filter can
 keep hundreds of thousands of cells; binding that many parameters is unworkable and
