@@ -329,6 +329,48 @@ def edge_color_values(dataset: str, body: EdgeColorRequest,
     )
 
 
+@router.get("/{dataset}/neighborhood/{cell_id:path}")
+def cell_neighborhood(dataset: str, cell_id: str,
+                      field: Optional[str] = Query(None),
+                      edge_file: str = Query("edges.parquet")):
+    """Everything one cell is connected to, plus a summary of it (issue #60).
+
+    Unfiltered and unsampled by design: a neighbourhood describes the tissue, not
+    the current view, so density, the viewport and every filter are ignored.
+
+    `field` names a *cell* metadata column to break the neighbourhood down by.
+    Composition comes from the cells table rather than the edge file's
+    sending_type — that column is absent on five of six platforms, carries one
+    label, and is frozen at scoring time (see docs/edge_filter_independence.md).
+    """
+    nb = _reader(dataset, edge_file).neighborhood(cell_id)
+    if nb is None:
+        # Not an error: a cell with no edges is an ordinary outcome, and the panel
+        # says "no connections" rather than showing an empty summary.
+        return {"cell_id": cell_id, "n_neighbors": 0, "n_edges": 0,
+                "neighbors": [], "neighbor_points": [], "lrm_composition": []}
+
+    if field and nb["neighbors"]:
+        from app.routers import spatial
+        try:
+            frame = spatial._reader(dataset)._metadata_frame()
+        except Exception:
+            frame = None
+        # Keyed on the cell_id *column*, matching filter_cell_ids — the frame
+        # carries a plain RangeIndex, so indexing by position would silently
+        # match nothing and report every neighbour as missing.
+        if frame is not None and field in frame.columns and "cell_id" in frame.columns:
+            ids = frame["cell_id"].astype(str)
+            sub = frame.loc[ids.isin(set(nb["neighbors"])), field].dropna()
+            counts = sub.astype(str).value_counts()
+            nb["composition_field"] = field
+            nb["composition"] = [{"value": k, "n": int(v)} for k, v in counts.items()]
+            # Neighbours the column says nothing about are reported rather than
+            # dropped, so the parts always add up to n_neighbors.
+            nb["composition_missing"] = nb["n_neighbors"] - int(counts.sum())
+    return nb
+
+
 @router.get("/{dataset}/edge/{edge_id:path}")
 def edge_detail(dataset: str, edge_id: str,
                 edge_file: str = Query("edges.parquet")):

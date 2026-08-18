@@ -68,7 +68,11 @@ export default function CellInfoPanel() {
 
       {loading && <div style={{ color: "#555" }}>Loading…</div>}
 
-      {detail && !loading && (
+      {/* `detail` is state and outlives `selectedCell` by one render when the
+          selection is cleared — changing dataset, for instance. Guarding on both
+          stops stale detail being shown for a cell that is no longer selected,
+          and stops the section below dereferencing a null selection. */}
+      {detail && selectedCell && !loading && (
         <>
           {/* Color-by highlight — shown whenever cell coloring is active */}
           {colorByInfo && (
@@ -118,9 +122,133 @@ export default function CellInfoPanel() {
                 ))}
             </>
           )}
+
+          <NeighborhoodSection
+            dataset={dataset} cellId={selectedCell.cell_id}
+            panelIndex={selection?.panelIndex ?? 0}
+            unitLabel={platformCapabilities?.unit_label ?? "cell"}
+          />
         </>
       )}
     </div>
+  );
+}
+
+/**
+ * Issue #60 — what this cell is connected to in the tissue graph.
+ *
+ * Fetched on demand rather than with the cell detail: it is a second query, and
+ * most clicks are just "what is this cell". The result comes from the server
+ * unfiltered and unsampled — see the store's `neighborhood` note for why it
+ * cannot be derived from the edges the frontend already holds.
+ */
+function NeighborhoodSection({ dataset, cellId, panelIndex, unitLabel }) {
+  const apiBase = useStore((s) => s.apiBase);
+  const neighborhood = useStore((s) => s.neighborhood);
+  const setNeighborhood = useStore((s) => s.setNeighborhood);
+  const clearNeighborhood = useStore((s) => s.clearNeighborhood);
+  const panel = useStore((s) => s.panels[panelIndex]);
+  const { colorBy } = usePanelSettings(panelIndex);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  const shown = neighborhood?.cellId === cellId ? neighborhood.data : null;
+
+  const load = async () => {
+    setLoading(true); setError(null);
+    // Break the neighbourhood down by whatever the user is already colouring by;
+    // asking them to pick a column again would repeat a choice they just made.
+    const field = colorBy?.mode === "metadata" && colorBy.field ? colorBy.field : null;
+    const ef = `?edge_file=${encodeURIComponent(panel?.edgeFile ?? "edges.parquet")}`;
+    const q = field ? `${ef}&field=${encodeURIComponent(field)}` : ef;
+    try {
+      const r = await fetch(
+        `${apiBase}/edges/${dataset}/neighborhood/${encodeURIComponent(cellId)}${q}`);
+      if (!r.ok) { setError(`HTTP ${r.status}`); return; }
+      setNeighborhood({ panelIndex, cellId, data: await r.json() });
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const pixelSize = panel?.pixelSize ?? 1;
+
+  return (
+    <>
+      <Divider label="neighbourhood" />
+      {!shown && (
+        <button
+          onClick={load} disabled={loading}
+          style={{
+            width: "100%", padding: "4px 6px", marginBottom: 4,
+            fontFamily: "monospace", fontSize: 11, cursor: "pointer",
+            background: "transparent", color: "#8af",
+            border: "1px solid #3a3a3a", borderRadius: 3,
+          }}
+        >
+          {loading ? "loading…" : `show local neighbourhood`}
+        </button>
+      )}
+      {error && <div style={{ color: "#c66", fontSize: 10 }}>{error}</div>}
+
+      {shown && shown.n_neighbors === 0 && (
+        <div style={{ color: "#777", fontSize: 10, marginBottom: 4 }}>
+          This {unitLabel} has no connections in the tissue graph.
+        </div>
+      )}
+
+      {shown && shown.n_neighbors > 0 && (
+        <>
+          <MetaRow k="neighbours" v={shown.n_neighbors} accent />
+          <MetaRow k="local edges" v={shown.n_edges} />
+          <MetaRow k="radius" v={`${shown.radius_um.toFixed(1)} µm`} />
+          {shown.n_autocrine > 0 && <MetaRow k="autocrine" v="yes" />}
+
+          {shown.composition?.length > 0 && (
+            <>
+              <Divider label={`by ${shown.composition_field}`} />
+              {shown.composition.map((c) => (
+                <MetaRow key={c.value} k={c.value}
+                         v={`${c.n}  (${Math.round(c.n / shown.n_neighbors * 100)}%)`} />
+              ))}
+              {shown.composition_missing > 0 && (
+                <MetaRow k="(no value)" v={shown.composition_missing} />
+              )}
+            </>
+          )}
+          {!shown.composition && (
+            <div style={{ fontSize: 9, color: "#555", marginTop: 3 }}>
+              Colour cells by a metadata column to see composition.
+            </div>
+          )}
+
+          {shown.lrm_composition?.length > 0 && (
+            <>
+              <Divider label={`mechanisms (by ${shown.score_basis})`} />
+              {shown.lrm_composition.map((m) => (
+                <MetaRow key={m.lrm} k={m.lrm}
+                         v={shown.score_basis === "score"
+                            ? m.value.toFixed(2) : m.value} />
+              ))}
+            </>
+          )}
+
+          <button
+            onClick={clearNeighborhood}
+            style={{
+              width: "100%", marginTop: 6, padding: "3px 6px",
+              fontFamily: "monospace", fontSize: 10, cursor: "pointer",
+              background: "transparent", color: "#888",
+              border: "1px solid #3a3a3a", borderRadius: 3,
+            }}
+          >
+            hide highlight
+          </button>
+        </>
+      )}
+    </>
   );
 }
 

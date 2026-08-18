@@ -109,7 +109,8 @@ backend/
       tiles.py               DZI descriptor + tile serving; auto-builds pyramid on first request
       spatial.py             Platform-agnostic router: all /spatial/... endpoints
       xenium.py              DEPRECATED — kept for reference; not registered in main.py
-      edges.py               edge query, LRM catalogue, edge color values, edge detail;
+      edges.py               edge query, LRM catalogue, edge color values, edge detail,
+                             per-cell neighbourhood summary (#60);
                              all endpoints take an edge_file param (multi-file support);
                              /files lists edge sources (top-level + edges/ folder)
       layers.py              generic parquet layer router
@@ -346,6 +347,37 @@ Parquet wins a name collision (`schema()` uses `setdefault`): it is the authorit
 source, and a supplemental column silently shadowing a real one would be painful to debug.
 
 ---
+
+## Local Neighbourhood (issue #60)
+
+`GET /edges/{dataset}/neighborhood/{cell_id}?field=<cell column>` returns every
+cell the clicked one is joined to by any edge, plus counts, the enclosing radius
+in µm, a breakdown by any cell metadata column, and the top LRMs over its
+incident edges.
+
+**It is deliberately unfiltered and unsampled.** A neighbourhood is a property of
+the tissue, not of the current view, so density, the viewport, the endpoint
+filters and the LRM checklist are all ignored. This is also why it cannot be
+computed in the frontend from the `edges` array already in memory: that array is
+density-sampled (a tenth of the neighbours by default) and viewport-bounded, so
+the answer would be silently short and would change as you pan. Cost is not a
+reason to avoid the query — 15 ms on the 3.8M-row CosMx file.
+
+Composition resolves against the **cells table**, keyed on its `cell_id` column
+(the frame carries a plain RangeIndex, so indexing by position matches nothing
+and reports every neighbour as missing). Not the edge file's `sending_type` —
+see the caveat under the edges.parquet schema.
+
+Two marks are drawn, and both are needed. The **connected cells** are the honest
+answer, since connectivity is anisotropic: a cell at a tissue boundary has
+neighbours on one side only, and the enclosing **circle** contains many cells it
+is not connected to. The circle is what the issue asked for and gives the spatial
+scale; the points say which cells actually count.
+
+`neighborhood` in the store carries its `panelIndex` like annotations and
+selection, and is dropped whenever the selection changes or its own panel changes
+dataset — a highlight left over from a previous cell would sit on unrelated
+tissue and read as the answer for the cell now selected.
 
 ## Multiple Edge Files (edges/ folder)
 

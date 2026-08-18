@@ -252,7 +252,8 @@ export const useStore = create((set, get) => ({
     });
     // Selections belong to a dataset; drop any that pointed at the old one.
     const sel = s.selection && s.selection.panelIndex === i ? null : s.selection;
-    return { panels, selection: sel };
+    const nb = s.neighborhood && s.neighborhood.panelIndex === i ? null : s.neighborhood;
+    return { panels, selection: sel, neighborhood: nb };
   }),
 
   // The LRM catalogue, colour range and edge filter are all specific to one
@@ -279,11 +280,28 @@ export const useStore = create((set, get) => ({
   // dataset and show the wrong cell.
   //   { panelIndex, kind: "cell" | "edge", cell? , edge? }
   selection: null,
+  // Every selection change drops the neighbourhood with it. A highlight left
+  // over from a previous cell would sit on unrelated tissue and look like the
+  // answer for the cell now selected.
   setSelectedCell: (cell, panelIndex = 0) =>
-    set({ selection: cell ? { panelIndex, kind: "cell", cell } : null }),
+    set({ selection: cell ? { panelIndex, kind: "cell", cell } : null,
+          neighborhood: null }),
   setSelectedEdge: (edge, panelIndex = 0) =>
-    set({ selection: edge ? { panelIndex, kind: "edge", edge } : null }),
-  clearSelection: () => set({ selection: null }),
+    set({ selection: edge ? { panelIndex, kind: "edge", edge } : null,
+          neighborhood: null }),
+  clearSelection: () => set({ selection: null, neighborhood: null }),
+
+  // ── Local neighbourhood (issue #60) ───────────────────────────────────────
+  // { panelIndex, cellId, data } — data is the /neighborhood response. Carries
+  // its panel because the highlight is drawn in one panel only, like
+  // annotations and selection: the coordinates are that dataset's image pixels.
+  //
+  // Computed server-side and never from the frontend's `edges` array, which is
+  // density-sampled and viewport-bounded — deriving it here would silently
+  // under-count neighbours and change as you pan.
+  neighborhood: null,
+  setNeighborhood: (nb) => set({ neighborhood: nb }),
+  clearNeighborhood: () => set({ neighborhood: null }),
 
   // ── Categorical / continuous override (issue #35) ─────────────────────────
   // Keyed "cell::<field>" / "edge::<field>" → true | false. Absent means

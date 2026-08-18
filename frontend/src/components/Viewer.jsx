@@ -178,6 +178,12 @@ function ViewerPanel({ panelIndex }) {
   // Annotations belong to the panel that drew them. Subscribe to the raw arrays
   // so a change re-renders, then narrow — the selectors on the store are plain
   // functions and would not themselves trigger an update.
+  // Issue #60. Scoped to this panel: the coordinates are this dataset's image
+  // pixels, so a highlight from the other panel would land nowhere meaningful.
+  const neighborhoodState = useStore((s) => s.neighborhood);
+  const neighborhood = neighborhoodState?.panelIndex === panelIndex
+    ? neighborhoodState.data : null;
+
   const allRegions = useStore((s) => s.regions);
   const allMeasurements = useStore((s) => s.measurements);
   const activeRegionPanel = useStore((s) => s.activeRegionPanel);
@@ -945,6 +951,54 @@ function ViewerPanel({ panelIndex }) {
   });
 
   // ── Annotation layers ─────────────────────────────────────────────────────
+  // Two marks, because the radius alone would mislead. Connectivity is
+  // anisotropic — a cell at a tissue boundary has neighbours on one side only —
+  // so a disc around it encloses many cells it is not connected to. The points
+  // are the honest answer; the circle is the spatial scale that was asked for.
+  const neighborRingLayer = new ScatterplotLayer({
+    id: "neighborhood-radius",
+    data: neighborhood?.center && neighborhood.radius_px > 0 ? [neighborhood] : [],
+    modelMatrix: rotModelMatrix,
+    getPosition: (d) => d.center,
+    getRadius: (d) => d.radius_px,
+    radiusUnits: "common",
+    filled: false,
+    stroked: true,
+    getLineColor: [255, 210, 80, 150],
+    getLineWidth: 1.5,
+    lineWidthMinPixels: 1,
+    pickable: false,
+  });
+  const neighborPointLayer = new ScatterplotLayer({
+    id: "neighborhood-cells",
+    data: neighborhood?.neighbor_points ?? [],
+    modelMatrix: rotModelMatrix,
+    getPosition: (d) => [d.x, d.y],
+    getRadius: 5,
+    radiusMinPixels: 3,
+    radiusMaxPixels: 9,
+    getFillColor: [255, 210, 80, 230],
+    stroked: true,
+    getLineColor: [40, 30, 0, 255],
+    lineWidthMinPixels: 0.5,
+    pickable: false,
+  });
+  // The clicked cell itself, so the centre of the neighbourhood is unambiguous.
+  const neighborCenterLayer = new ScatterplotLayer({
+    id: "neighborhood-center",
+    data: neighborhood?.center ? [neighborhood] : [],
+    modelMatrix: rotModelMatrix,
+    getPosition: (d) => d.center,
+    getRadius: 7,
+    radiusMinPixels: 4,
+    radiusMaxPixels: 12,
+    getFillColor: [255, 255, 255, 255],
+    stroked: true,
+    getLineColor: [255, 160, 0, 255],
+    lineWidthMinPixels: 1.5,
+    pickable: false,
+  });
+
   const regionFillLayers = regions.map((r) =>
     new SolidPolygonLayer({
       id: `region-fill-${r.id}`,
@@ -1032,6 +1086,9 @@ function ViewerPanel({ panelIndex }) {
   const deckLayers = [
     cellFillLayer, cellOutlineLayer, transcriptLayer,
     tissueGraphLayer, edgeDirectedLayer, edgeArrowheadLayer, edgeAutocrineLayer,
+    // Above the edges so the highlight reads against them, below the annotations
+    // so a region outline is never hidden by it.
+    neighborRingLayer, neighborPointLayer, neighborCenterLayer,
     ...regionFillLayers, ...regionOutlineLayers,
     activeRegionLayer, activeVertexLayer,
     measureLineLayer, measureEndpointLayer, measureFirstLayer,
