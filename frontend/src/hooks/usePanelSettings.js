@@ -13,11 +13,16 @@
  * swap and the destructuring below it is untouched. Phase 2a is meant to be
  * provably behaviour-preserving, and a mechanical diff is the way to be sure.
  *
- * Known cost, to fix later rather than now: like the bare `useStore()` it
- * replaces, this subscribes to the entire store, so every consumer re-renders on
- * any state change — including each viewport update during a pan. Narrowing the
- * subscriptions is worth doing, but it changes render behaviour, and mixing that
- * into the state migration would defeat the point of a frozen stage.
+ * It subscribes to the whole store, which is what the bare `useStore()` it
+ * replaced did. That is coarse, but only one thing made it actually expensive:
+ * `viewports` and `viewportActual` are rewritten on every OpenSeadragon
+ * viewport-change event, so a single pan pushed dozens of re-renders through
+ * every sidebar section. `IGNORED_KEYS` below drops exactly those, and nothing
+ * else — see the note there.
+ *
+ * Narrowing the rest properly means giving each of the nineteen sidebar sections
+ * its own selector, which is a real refactor with no component tests behind it.
+ * Not worth it for what remains once the pan storm is gone.
  */
 import { createContext, useContext } from "react";
 import { useStore } from "../store";
@@ -43,9 +48,36 @@ export function usePanelIndex(explicit = null) {
  * @param explicitIndex pass when the component already knows its panel
  *                      (ViewerPanel does); otherwise the context decides.
  */
+/**
+ * State that changes continuously and that no consumer of this hook reads.
+ *
+ * Both are rewritten on every OSD viewport-change event — dozens of times during
+ * one pan — and both are read only through their own narrow selectors:
+ * `ViewerPanel` takes `viewports[panelIndex]`, and ⇔ Match zoom reads
+ * `viewportActual` via `getState()`. LayerPanel, CellInfoPanel and
+ * AnnotationToolbar reference neither.
+ *
+ * **Before adding a key here, check nothing reading it comes through this hook** —
+ * ignoring a key a consumer does read makes that consumer silently stale, which
+ * is a much worse bug than a redundant render.
+ */
+const IGNORED_KEYS = ["viewports", "viewportActual"];
+
+function equalIgnoringHotKeys(a, b) {
+  if (Object.is(a, b)) return true;
+  if (!a || !b) return false;
+  const keys = Object.keys(a);
+  if (keys.length !== Object.keys(b).length) return false;
+  for (const k of keys) {
+    if (IGNORED_KEYS.includes(k)) continue;
+    if (!Object.is(a[k], b[k])) return false;
+  }
+  return true;
+}
+
 export function usePanelSettings(explicitIndex = null) {
   const i = usePanelIndex(explicitIndex);
-  const store = useStore();
+  const store = useStore((s) => s, equalIgnoringHotKeys);
   const settings = store.panels[i]?.settings ?? store.panels[0].settings;
   return { ...store, ...settings, panelIndex: i };
 }

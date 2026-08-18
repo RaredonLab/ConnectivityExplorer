@@ -446,6 +446,15 @@ All shared state lives in a single Zustand store. Key sections:
   `cellColorPalette`, `cellColorClamp` (squish/oob cutoffs). `cellColorType` /
   `cellColorCategories` hold the type the backend actually returned, written by
   panel 0 — the LayerPanel reads these instead of guessing from the schema dtype.
+
+**`usePanelSettings` ignores `viewports` / `viewportActual`.** Both are rewritten on
+every OpenSeadragon viewport-change event, and no consumer of that hook reads either
+— `ViewerPanel` takes `viewports[panelIndex]` through its own selector, and ⇔ Match
+zoom reads `viewportActual` via `getState()`. Measured over one simulated pan (120
+writes): **121 re-renders of every sidebar section before, 0 after**, with ordinary
+settings changes still delivered. Before adding a key to `IGNORED_KEYS`, check that
+nothing reading it comes through the hook — ignoring a key a consumer *does* read
+makes that consumer silently stale, which is far worse than a redundant render.
 - **Categorical override**: `categoricalOverrides`, keyed `cell::<field>` /
   `edge::<field>` → `true | false`; absent means auto-detect (issue #35).
 - **Metadata filters**: each is `{ field, values, min, max, includeMissing }` or null.
@@ -1235,6 +1244,14 @@ cannot drift apart.
 `sort_categories()` sorts numerically when every label parses as a number, so cluster
 10 comes after cluster 2 rather than between 1 and 2.
 
+**A column can be present in the schema and hold nothing.** `fov` and
+`transcript_count` are entirely null on the bundled MERSCOPE dataset. Such columns
+now come back with `empty: True` rather than as a continuous 0–0 range, and the
+filter section says "no values in this column" instead of drawing a range slider
+that does nothing over a filter that correctly matches no cells. `type` is still
+set, so nothing switching on categorical-vs-continuous needs a third case, and the
+cross-panel merge treats a column as empty only when it is empty in *every* panel.
+
 **`_color_values_meta` now lives on the base class.** Every reader used to carry a
 near-identical copy, and the six copies had already drifted — CosMx filled NaN with
 `""`/`0` where the others dropped it, and only some passed `key=str` to `sorted`.
@@ -1408,6 +1425,15 @@ and `CACHE_DIR` relocates both the DZI pyramids and the spatial index off the da
 **Access control is opt-in and off by default.** The Caddyfile supports `basicauth`, but
 unless it is enabled anyone with the URL can view the data. There is no application-level
 auth, no user accounts, and no per-dataset permissions.
+
+**Releasing.** The version lives in **three** places and they must move together —
+`frontend/package.json` (read at build time via vite's `__APP_VERSION__`),
+`backend/app/main.py` (`APP_VERSION`, served by `/health`), and the line under the
+title in `README.md`. The sidebar badge compares the first two and turns red when
+they disagree, so a half-bump is visible but only once the app is running.
+
+Every other `v0.x.y` in the tree is a *historical* reference — "shipped in v0.8.4",
+"present since v0.2.0" — and must not be swept along by a bump.
 
 **Regression guard.** `backend/tests/golden_snapshot.py` exercises every reader method
 against all local datasets, digests the results, and diffs them against a recorded

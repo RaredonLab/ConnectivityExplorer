@@ -1,5 +1,7 @@
 # TissuePlex
 
+**v0.8.8**
+
 An interactive spatial transcriptomics viewer for exploring cell-cell communication from [NICHESv2](https://github.com/RaredonLab/NICHESv2) directly on the tissue image.
 
 ![TissuePlex demo](docs/demo.gif)

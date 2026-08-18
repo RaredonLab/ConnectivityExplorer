@@ -53,7 +53,10 @@ def usable_field(frame):
 
 
 def spec_for(reader, field):
-    cv = reader.color_values("metadata", None, field)
+    # color_values(mode, field, genes, categorical) — passing field positionally
+    # into `genes` silently returns the empty result, which made spec_for return
+    # None and skipped the subset assertion below on most datasets.
+    cv = reader.color_values("metadata", field)
     if cv.get("categories"):
         return MetadataFilter.build(field, values=cv["categories"][:1])
     lo, hi = cv.get("min"), cv.get("max")
@@ -90,7 +93,12 @@ def check(ds: str) -> str:
        {r["edge"] for r in er.query_structure(density=0.1)}:
         failures.append(f"[{ds}] sampling is not stable between identical calls")
 
-    return f"{baseline:>8,} edges  filter=[{field}]" if field else f"{baseline:>8,} edges  (no filterable column)"
+    if ids:
+        return f"{baseline:>8,} edges  filter=[{field}] -> {len(ids):,} cells"
+    # Reported rather than passed over in silence: with no resolvable filter the
+    # subset assertion above never runs, and a check that skips its own core
+    # property while printing OK is worse than no check.
+    return f"{baseline:>8,} edges  NO FILTER RESOLVED — subset assertion skipped"
 
 
 found = sorted(p.name for p in DATA_ROOT.iterdir() if (p / "edges.parquet").exists())

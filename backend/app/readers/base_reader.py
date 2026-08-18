@@ -175,8 +175,18 @@ class SpatialDatasetReader(ABC):
 
     def _color_values_meta(self, field: str,
                            categorical: Optional[bool] = None) -> dict:
-        """Per-cell values for one metadata column, typed for the frontend."""
-        empty = {"type": "continuous", "values": {}, "min": 0.0, "max": 0.0}
+        """Per-cell values for one metadata column, typed for the frontend.
+
+        A column with no usable values is reported as ``empty: True`` rather than
+        as a continuous 0–0 range. Several real files ship such columns —
+        ``fov`` and ``transcript_count`` are entirely null on the bundled MERSCOPE
+        dataset — and the old shape gave the UI a range slider that did nothing,
+        a legend with no span, and a filter that correctly matched no cells while
+        looking broken. ``type`` is still set so nothing switching on
+        categorical-vs-continuous has to learn a third case.
+        """
+        empty = {"type": "continuous", "values": {}, "min": 0.0, "max": 0.0,
+                 "empty": True}
         df = self._metadata_frame()
         if df is None or df.empty or "cell_id" not in df.columns \
                 or field not in df.columns:
@@ -193,6 +203,7 @@ class SpatialDatasetReader(ABC):
                 "type": "categorical",
                 "values": values,
                 "categories": metadata_filter.sort_categories(set(values.values())),
+                "empty": not values,
             }
 
         # to_numeric rather than float(): a forced-continuous request can land on a
@@ -208,7 +219,7 @@ class SpatialDatasetReader(ABC):
         if not finite:
             return empty
         return {"type": "continuous", "values": values,
-                "min": min(finite), "max": max(finite)}
+                "min": min(finite), "max": max(finite), "empty": False}
 
     def filter_cell_ids(self, spec: Optional[MetadataFilter]) -> Optional[set]:
         """Resolve a metadata filter to the set of cell ids it keeps (issue #45).
