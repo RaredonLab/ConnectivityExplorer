@@ -560,15 +560,20 @@ function CategoricalLegend({ field, categories = [] }) {
 async function mergeColorValues(promises) {
   const rs = (await Promise.all(promises)).filter(Boolean);
   if (!rs.length) return null;
+  // A column can be present in the schema and hold nothing — `fov` and
+  // `transcript_count` are entirely null on the bundled MERSCOPE dataset. Empty
+  // only if it is empty in *every* panel: one panel having values is enough to
+  // make the control worth showing.
+  const empty = rs.every((r) => r.empty);
   if (rs.some((r) => r.type === "categorical")) {
     const seen = new Set(), cats = [];
     for (const r of rs) for (const c of r.categories ?? [])
       if (!seen.has(c)) { seen.add(c); cats.push(c); }
-    return { type: "categorical", categories: cats };
+    return { type: "categorical", categories: cats, empty };
   }
   const mins = rs.map((r) => r.min).filter((v) => v != null);
   const maxs = rs.map((r) => r.max).filter((v) => v != null);
-  return { type: "continuous", min: Math.min(...mins), max: Math.max(...maxs) };
+  return { type: "continuous", min: Math.min(...mins), max: Math.max(...maxs), empty };
 }
 
 // ── Metadata filter (issue #45) ───────────────────────────────────────────────
@@ -632,7 +637,16 @@ function MetadataFilterSection({
         <div style={{ fontSize: 9, color: "#555", marginTop: 4 }}>loading values…</div>
       )}
 
-      {field && !loading && meta?.type === "categorical" && (
+      {/* Present in the schema but holding nothing. Saying so beats a range
+          slider that spans 0–0 and a filter that correctly matches no cells
+          while looking broken. */}
+      {field && !loading && meta?.empty && (
+        <div style={{ fontSize: 10, color: "#a86", marginTop: 4 }}>
+          no values in this column
+        </div>
+      )}
+
+      {field && !loading && !meta?.empty && meta?.type === "categorical" && (
         <div style={{ marginTop: 5 }}>
           <div style={{ maxHeight: 150, overflowY: "auto", paddingRight: 2 }}>
             {(meta.categories ?? []).map((cat) => (
@@ -670,7 +684,7 @@ function MetadataFilterSection({
         </div>
       )}
 
-      {field && !loading && meta?.type === "continuous" && (
+      {field && !loading && !meta?.empty && meta?.type === "continuous" && (
         <div style={{ marginTop: 5, display: "flex", gap: 4, alignItems: "center" }}>
           <span style={{ fontSize: 9, color: "#555" }}>min</span>
           <input
