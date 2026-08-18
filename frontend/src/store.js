@@ -56,7 +56,15 @@ export function makeSettings() {
     hiddenLrms: new Set(),
     selectedGenes: null,                      // null = no filter; Set = allowlist
     cellFilter: null,
-    edgeFilter: null,
+    // Edge-side filters (issue #59). Independent of cellFilter: filtering cells
+    // and filtering edges are separate actions, and an edge may terminate on a
+    // cell that is not drawn.
+    //   sending/receivingFilter — a *cell* metadata predicate on one endpoint;
+    //     both set gives the intersection, one set leaves the other end free.
+    //   edgeFilters — predicates on the edge table / edge-metadata, and-ed.
+    sendingFilter: null,
+    receivingFilter: null,
+    edgeFilters: [],
     categoricalOverrides: {},                 // "cell::<field>" | "edge::<field>" -> bool
     categoryColorOverrides: {},               // "<field>::<category>" -> [r,g,b,a]
     transcriptColorOverrides: {},             // gene -> [r,g,b,a]
@@ -76,6 +84,7 @@ function cloneSettings(src) {
     selectedGenes: src.selectedGenes === null ? null : new Set(src.selectedGenes),
     layers: Object.fromEntries(
       Object.entries(src.layers).map(([k, v]) => [k, { ...v }])),
+    edgeFilters: [...(src.edgeFilters ?? [])],
     categoricalOverrides: { ...src.categoricalOverrides },
     categoryColorOverrides: { ...src.categoryColorOverrides },
     transcriptColorOverrides: { ...src.transcriptColorOverrides },
@@ -114,7 +123,13 @@ export function sanitiseSettings(next, allowed, sameDataset) {
     next.edgeColorBy = { mode: "lrm_set", field: null };
   }
   if (next.cellFilter && !has(cellFields, next.cellFilter.field)) next.cellFilter = null;
-  if (next.edgeFilter && !has(edgeFields, next.edgeFilter.field)) next.edgeFilter = null;
+  // The endpoint filters name *cell* columns even though they filter edges, so
+  // they validate against cellFields — getting this wrong would drop every one of
+  // them against a target whose edge table simply has different columns.
+  if (next.sendingFilter && !has(cellFields, next.sendingFilter.field)) next.sendingFilter = null;
+  if (next.receivingFilter && !has(cellFields, next.receivingFilter.field)) next.receivingFilter = null;
+  // Every filter in the list is validated, not just the first.
+  next.edgeFilters = (next.edgeFilters ?? []).filter((f) => has(edgeFields, f.field));
 
   if (next.selectedGenes && genes) {
     const keep = [...next.selectedGenes].filter((g) => genes.has(g));
@@ -211,7 +226,9 @@ export const useStore = create((set, get) => ({
       hiddenLrms: new Set(),
       categoricalOverrides: {},
       cellFilter: null,
-      edgeFilter: null,
+      sendingFilter: null,
+      receivingFilter: null,
+      edgeFilters: [],
       categoryColorOverrides: {},
       transcriptColorOverrides: {},
       colorBy: { mode: "off", field: null },
@@ -251,7 +268,7 @@ export const useStore = create((set, get) => ({
     // Mechanism and edge-column names are specific to one edge file, so the
     // panel that changed is always cleared; the others only while linked.
     const panels = next.map((p, idx) => (idx === i || s.linkSettings)
-      ? { ...p, settings: { ...p.settings, hiddenLrms: new Set(), edgeFilter: null } }
+      ? { ...p, settings: { ...p.settings, hiddenLrms: new Set(), edgeFilters: [] } }
       : p);
     return { panels, selection: sel };
   }),
@@ -281,7 +298,8 @@ export const useStore = create((set, get) => ({
   // to a rare cluster shows all of it rather than a sample of a sample.
   //
   // cellFilter also governs edges: an edge is drawn only when BOTH endpoints
-  // survive it. edgeFilter is independent and applies to the edge table itself.
+  // survive it — superseded by sendingFilter/receivingFilter, which apply to one
+  // endpoint each and are independent of the cell layer entirely (issue #59).
 
   // ── Shared colour scale across panels ─────────────────────────────────────
   // On by default, and this is a figure-integrity setting rather than a
@@ -462,7 +480,16 @@ export const useStore = create((set, get) => ({
   setAutocrineLineWidth: (v) => get().patchSettings({ autocrineLineWidth: v }),
 
   setCellFilter: (f) => get().patchSettings({ cellFilter: f }),
-  setEdgeFilter: (f) => get().patchSettings({ edgeFilter: f }),
+  setSendingFilter: (f) => get().patchSettings({ sendingFilter: f }),
+  setReceivingFilter: (f) => get().patchSettings({ receivingFilter: f }),
+  // Edge-table filters are a list, and-ed together. Index-addressed so the UI
+  // can add, replace and remove rows without rebuilding the array itself.
+  setEdgeFilterAt: (i, f) => {
+    const next = [...(get().getSetting("edgeFilters") ?? [])];
+    if (f === null) next.splice(i, 1); else next[i] = f;
+    get().patchSettings({ edgeFilters: next.filter(Boolean) });
+  },
+  setEdgeFilters: (list) => get().patchSettings({ edgeFilters: list ?? [] }),
 
   // ── LRM mechanism filter ───────────────────────────────────────────────────
   // Keyed on the "ligand|receptor" string, so a mechanism present in both

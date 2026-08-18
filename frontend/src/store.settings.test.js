@@ -347,12 +347,25 @@ describe("2c — the guard drops what the target cannot honour", () => {
     expect(settings(1).colorBy).toEqual({ mode: "gene_set", field: null });
   });
 
-  it("drops an edge filter and edge colour-by naming missing columns", () => {
-    S().setEdgeFilter({ field: "nope", values: ["1"] });
+  it("drops edge filters and edge colour-by naming missing columns", () => {
+    S().setEdgeFilters([{ field: "confidence", values: ["high"] },
+                        { field: "nope", values: ["1"] }]);
     S().setEdgeColorBy("metadata", "nope");
     S().pushSettings(0, 1, allowed);
-    expect(settings(1).edgeFilter).toBeNull();
+    // Every filter in the list is checked, not just the first.
+    expect(settings(1).edgeFilters).toEqual([{ field: "confidence", values: ["high"] }]);
     expect(settings(1).edgeColorBy).toEqual({ mode: "lrm_set", field: null });
+  });
+
+  it("validates endpoint filters against CELL columns, not edge columns", () => {
+    // sendingFilter/receivingFilter name cell metadata even though they filter
+    // edges. Checking them against edgeFields would drop every one of them
+    // whenever the target's edge table happens to have different columns.
+    S().setSendingFilter({ field: "cluster", values: ["4"] });
+    S().setReceivingFilter({ field: "absent_column", values: ["x"] });
+    S().pushSettings(0, 1, allowed);
+    expect(settings(1).sendingFilter).toEqual({ field: "cluster", values: ["4"] });
+    expect(settings(1).receivingFilter).toBeNull();
   });
 
   it("intersects the gene allowlist", () => {
@@ -402,5 +415,55 @@ describe("2c — the guard drops what the target cannot honour", () => {
     S().setCellColorClamp(0, 4000);
     S().pushSettings(0, 1, allowed);
     expect(settings(1).cellColorClamp).toEqual({ low: 0, high: 4000 });
+  });
+});
+
+describe("#59 — edge filtering is independent of cell filtering", () => {
+  it("cellFilter and the endpoint filters are separate values", () => {
+    S().setCellFilter({ field: "region", values: ["crypt"] });
+    expect(settings(0).sendingFilter).toBeNull();
+    expect(settings(0).receivingFilter).toBeNull();
+
+    S().setSendingFilter({ field: "region", values: ["villus"] });
+    // Setting one must not disturb the other, in either direction.
+    expect(settings(0).cellFilter).toEqual({ field: "region", values: ["crypt"] });
+  });
+
+  it("edgeFilters is a list, and-ed", () => {
+    S().setEdgeFilters([{ field: "a", values: ["1"] }, { field: "b", values: ["2"] }]);
+    expect(settings(0).edgeFilters).toHaveLength(2);
+    S().setEdgeFilterAt(0, null);            // remove the first
+    expect(settings(0).edgeFilters).toEqual([{ field: "b", values: ["2"] }]);
+  });
+
+  it("a dataset change clears every filter that names a column", () => {
+    S().setCellFilter({ field: "region", values: ["crypt"] });
+    S().setSendingFilter({ field: "cluster", values: ["4"] });
+    S().setReceivingFilter({ field: "region", values: ["mid"] });
+    S().setEdgeFilters([{ field: "confidence", values: ["high"] }]);
+
+    S().setPanelDataset(0, "other-dataset");
+    expect(settings(0).cellFilter).toBeNull();
+    expect(settings(0).sendingFilter).toBeNull();
+    expect(settings(0).receivingFilter).toBeNull();
+    expect(settings(0).edgeFilters).toEqual([]);
+    // ...but not the density, which names nothing.
+    expect(settings(0).edgeDensity).toBe(0.1);
+  });
+
+  it("an edge-file change clears edge-table filters but not endpoint filters", () => {
+    // Edge-table column names are specific to one file; cell metadata is not.
+    S().setSendingFilter({ field: "cluster", values: ["4"] });
+    S().setEdgeFilters([{ field: "confidence", values: ["high"] }]);
+    S().setPanelEdgeFile(0, "edges/other.parquet");
+    expect(settings(0).edgeFilters).toEqual([]);
+    expect(settings(0).sendingFilter).toEqual({ field: "cluster", values: ["4"] });
+  });
+
+  it("cloneSettings does not alias the filter list across panels", () => {
+    S().setEdgeFilters([{ field: "a", values: ["1"] }]);
+    S().setActivePanel(0);
+    S().setLinkSettings(true);
+    expect(settings(0).edgeFilters).not.toBe(settings(1).edgeFilters);
   });
 });

@@ -904,10 +904,9 @@ write.csv(
   <ul>
     <li><strong>Cell segments</strong> — only matching cells are drawn, and only
     they can be clicked or captured by a region selection.</li>
-    <li><strong>Edges and the tissue graph</strong> — an edge is drawn only when
-    <em>both</em> of its endpoints match. The point of narrowing to two or three
-    cell types is the signalling within that subset, and an edge with one endpoint
-    outside would run off to a cell that is not on screen.</li>
+    <li><strong>Nothing else.</strong> The cell filter does not touch edges or the
+    tissue graph — filtering cells and filtering edges are independent actions. To
+    narrow the edges, use the sending and receiving filters described below.</li>
     <li><strong>Transcripts are not filtered.</strong> Several platforms ship no
     transcript-to-cell assignment at all, so there is nothing to match on.</li>
   </ul>
@@ -921,15 +920,50 @@ write.csv(
     <span class="ui">Cell Segments</span> updates to describe the subset.
   </div>
 
-  <h3>Filtering edges</h3>
-  <p>The <span class="ui">Edge Filter</span> inside <span class="ui">Edge
-  Data</span> works the same way but on columns of the edge table itself, including
-  annotations from an <code>edge-metadata/</code> folder — a curation call, a
-  confidence score, a review flag. It composes with the cell filter: set both and
-  you see only the annotated edges among your chosen cells.</p>
-  <p>This is distinct from the <span class="ui">LRM Mechanisms</span> checklist
-  below it. The checklist chooses which <em>mechanisms</em> are scored on every
-  edge; the edge filter chooses which <em>cell pairs</em> are drawn at all.</p>
+  <h3>Filtering edges by sending and receiving cell</h3>
+  <p><span class="ui">Edge Filter</span> inside <span class="ui">Edge Data</span>
+  has two dropdowns side by side — <span class="ui">Sending cell</span> and
+  <span class="ui">Receiving cell</span>. Each offers <strong>any cell metadata
+  column</strong>, the same list the cell filter uses, and each constrains one end
+  of an edge.</p>
+
+  <ul>
+    <li>Set <strong>one</strong> and that end is constrained while the other is
+    free — "everything sent from crypt cells, to anywhere".</li>
+    <li>Set <strong>both</strong> and you get the intersection: senders in one
+    group, receivers in the other. This is how you ask for
+    fibroblast&nbsp;&rarr;&nbsp;endothelial signalling and nothing else.</li>
+  </ul>
+
+  <div class="note">
+    <p>These are <strong>independent of the Cell Filter</strong> above. Narrowing
+    the cells you draw does not narrow the edges, and vice versa. An edge may
+    therefore terminate on a cell that is not currently drawn — that is intended,
+    so the graph structure can be read on its own terms.</p>
+  </div>
+
+  <p>Below the two dropdowns, a third filter works on columns of the
+  <em>edge table itself</em>, including annotations from an
+  <code>edge-metadata/</code> folder — a curation call, a confidence score, a
+  review flag.</p>
+
+  <p>All of these are distinct from the <span class="ui">LRM Mechanisms</span>
+  checklist. The checklist chooses which <em>mechanisms</em> are scored on every
+  edge; the filters choose which <em>cell pairs</em> are drawn at all.</p>
+
+  <h3>The order things happen in</h3>
+  <p>Understanding this makes the controls predictable:</p>
+  <ol>
+    <li>every edge in view</li>
+    <li><strong>density</strong> — keeps a spatially random fraction</li>
+    <li>the result is the <strong>Tissue Graph</strong> layer</li>
+    <li><strong>sending</strong>, then <strong>receiving</strong>, then the
+    edge-table filter</li>
+    <li>the result is the <strong>Edge Data</strong> layer</li>
+  </ol>
+  <p>Because the edge data is filtered <em>from</em> the tissue graph, it can never
+  appear where there is no graph edge beneath it. Both layers respond to the one
+  density slider and stay aligned as you move it.</p>
 </section>
 
 
@@ -1002,6 +1036,16 @@ write.csv(
   showing which cells are spatial neighbors, independent of any LRM information.
   Each line indicates spatial adjacency between two cells. Use the checkbox to
   toggle it and the opacity slider to adjust its visual weight.</p>
+
+  <div class="note">
+    <p>The tissue graph is <strong>ground truth</strong>: the total set of edges in
+    view. No filter narrows it — it is shown or hidden, nothing else. Only the
+    density slider changes how many of its lines are drawn, and that applies
+    equally to the Edge Data layer on top, so the two always align.</p>
+    <p>Use <strong>opacity</strong>, not density, to make it recede behind the edge
+    data. Lowering density removes lines from a layer whose whole purpose is to
+    show the complete structure.</p>
+  </div>
 </section>
 
 

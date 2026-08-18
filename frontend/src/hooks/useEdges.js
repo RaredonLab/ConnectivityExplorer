@@ -47,16 +47,31 @@ function filterBody(filter) {
 export function useEdges(
   apiBase, dataset, viewport, imageSize, enabled,
   minStrength, hiddenLrms, lrmCatalogue, density = 1.0,
-  edgeFile = "edges.parquet", cellFilter = null, edgeFilter = null
+  edgeFile = "edges.parquet",
+  { sendingFilter = null, receivingFilter = null, edgeFilters = null,
+    graphEnabled = false, graphDensity = 1.0 } = {}
 ) {
   // Which edge-source parquet to query; appended to every /edges request.
   const efParam = `?edge_file=${encodeURIComponent(edgeFile)}`;
 
-  // Serialised so the structural effect can depend on filter *content* rather
-  // than object identity, which changes on every render.
-  const cellFilterBody = filterBody(cellFilter);
-  const edgeFilterBody = filterBody(edgeFilter);
-  const filterKey = JSON.stringify([cellFilterBody ?? null, edgeFilterBody ?? null]);
+  // Serialised so the effects can depend on filter *content* rather than object
+  // identity, which changes on every render.
+  const sendingBody = filterBody(sendingFilter);
+  const receivingBody = filterBody(receivingFilter);
+  const edgeFilterBodies = (edgeFilters ?? []).map(filterBody).filter(Boolean);
+  const filterKey = JSON.stringify(
+    [sendingBody ?? null, receivingBody ?? null, edgeFilterBodies]);
+
+  // ── Tissue-graph state ────────────────────────────────────────────────────
+  // A separate fetch, and separate on purpose. The tissue graph is the total set
+  // of edges — ground truth, shown or hidden, never subset by a filter. It also
+  // cannot share the edge-data request: that one filters *then* samples so a rare
+  // subset draws at full density, while the graph must not filter at all. A
+  // `passes_filter` flag on one shared result would be read after the sample had
+  // already thinned the rows it describes.
+  const [graphEdges, setGraphEdges] = useState([]);
+  const graphTimerRef = useRef(null);
+  const graphAbortRef = useRef(null);
   // ── Structural state ──────────────────────────────────────────────────────
   const [structuralEdges, setStructuralEdges] = useState([]);
   const [loadingStructural, setLoadingStructural] = useState(false);
@@ -92,11 +107,13 @@ export function useEdges(
       const { xmin, ymin, xmax, ymax } = viewport;
       const body = { xmin, ymin, xmax, ymax, density: Math.max(0.01, Math.min(1.0, density)) };
       if (minStrength != null && minStrength > 0) body.min_strength = minStrength;
-      // Metadata filters go to the server so they apply before the density
-      // sample; filtering the response instead would sample first and leave a
-      // fraction of the subset.
-      if (cellFilterBody) body.cell_filter = cellFilterBody;
-      if (edgeFilterBody) body.edge_filter = edgeFilterBody;
+      // Filters go to the server so they apply before the density sample;
+      // filtering the response instead would sample first and leave a fraction
+      // of the subset. The cell layer's own filter is deliberately NOT sent —
+      // filtering cells and filtering edges are independent actions.
+      if (sendingBody) body.sending_filter = sendingBody;
+      if (receivingBody) body.receiving_filter = receivingBody;
+      if (edgeFilterBodies.length) body.edge_filters = edgeFilterBodies;
 
       try {
         const res = await fetch(`${apiBase}/edges/${dataset}/query-grouped${efParam}`, {
@@ -115,6 +132,37 @@ export function useEdges(
 
     return () => clearTimeout(structTimerRef.current);
   }, [apiBase, dataset, viewport, imageSize, enabled, minStrength, density, efParam, filterKey]); // eslint-disable-line
+
+  // ── Effect 1b: tissue-graph fetch ─────────────────────────────────────────
+  // Takes no filter arguments at all, and depends on no filter state — so no
+  // future edit can narrow the structural graph by wiring one through. Its only
+  // inputs are the viewport and its own density.
+  useEffect(() => {
+    if (!graphEnabled || !viewport || !imageSize?.w) {
+      setGraphEdges([]);
+      return;
+    }
+    clearTimeout(graphTimerRef.current);
+    graphTimerRef.current = setTimeout(async () => {
+      if (graphAbortRef.current) graphAbortRef.current.abort();
+      const ctrl = new AbortController();
+      graphAbortRef.current = ctrl;
+      const { xmin, ymin, xmax, ymax } = viewport;
+      try {
+        const res = await fetch(`${apiBase}/edges/${dataset}/query-structure${efParam}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ xmin, ymin, xmax, ymax,
+            density: Math.max(0.01, Math.min(1.0, graphDensity)) }),
+          signal: ctrl.signal,
+        });
+        setGraphEdges(res.ok ? await res.json() : []);
+      } catch (e) {
+        if (e.name !== "AbortError") setGraphEdges([]);
+      }
+    }, DEBOUNCE_MS);
+    return () => clearTimeout(graphTimerRef.current);
+  }, [apiBase, dataset, viewport, imageSize, graphEnabled, graphDensity, efParam]); // eslint-disable-line
 
   // ── Effect 2: score fetch ──────────────────────────────────────────────────
   // Runs when viewport OR hiddenLrms changes.
@@ -230,5 +278,7 @@ export function useEdges(
     };
   }, []);
 
-  return { edges, loading: loadingStructural || loadingScores };
+  // graphEdges is returned separately from edges — the tissue-graph layer must
+  // read the unfiltered set, never the filtered one.
+  return { edges, graphEdges, loading: loadingStructural || loadingScores };
 }

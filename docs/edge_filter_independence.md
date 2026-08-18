@@ -1,6 +1,18 @@
 # Issue #59 — independent sending / receiving edge filters
 
-Status: **planned, not started.**
+Status: **implemented** in v0.8.6. Kept as the design record.
+
+The pipeline as built:
+
+```
+all edges in viewport
+  → density filter        deterministic, spatially random
+  → EDGESET A             → tissue-graph layer   (query_structure)
+  → sending filter
+  → receiving filter
+  → edge-table filters
+  → EDGESET B             → edge-data layer      (query_grouped)
+```
 
 Upstream ask
 ([#59](https://github.com/RaredonLab/TissuePlex/issues/59)): designate a sending
@@ -126,11 +138,18 @@ want *opposite* things from sampling:
   rare subset draws that subset at full density rather than a tenth of it. That
   ordering is the whole point of resolving filters server-side (issue #45).
 
-One query cannot do both, because density runs last (above). Returning every edge
-with a `passes_filter` boolean would sample the rare subset away along with
-everything else, quietly undoing #45 — the flag would be evaluated *after* the
-sample had already thinned the rows it applies to. So: two requests, each keeping
-filter-then-sample internally, with separate density controls.
+One query cannot do both. Returning every edge with a `passes_filter` boolean
+would sample the rare subset away along with everything else — the flag would be
+read *after* the sample had thinned the rows it describes. So: two requests.
+
+**They must nonetheless select the same edges**, and this was the one real bug in
+the first implementation. Two independent `USING SAMPLE` draws at 10% overlap only
+about 1% of the time, so edge data appeared where the graph beneath it had been
+sampled away. `density_predicate` replaces bernoulli with a deterministic hash of
+the edge id: every edge gets the same verdict in every query, so the predicate
+commutes with the filters — density-then-filter and filter-then-density are the
+same set — and B ⊆ A holds at every density. It is also stable across re-fetches,
+where bernoulli flickers on each pan.
 
 Sizing, measured across the bundled datasets — unique directed edges:
 
@@ -143,11 +162,17 @@ Sizing, measured across the bundled datasets — unique directed edges:
 
 Rendering 169K–300K line segments is not the constraint; deck.gl handles that.
 The payload is — `query-grouped` returns ~15 fields per edge, so a whole-tissue
-view of a real run is tens of MB. The tissue graph therefore keeps a density
-slider of its own, and the existing 500K-row cap stays as the backstop. A
-**lean projection** for this endpoint (`x1,y1,x2,y2` and nothing else) is worth
-doing at the same time: the structural layer draws lines and needs no scores,
-types or LRM counts, which is most of the payload.
+view of a real run is tens of MB. The lean projection was therefore done up
+front rather than deferred: `edge` plus the four coordinates, measured **2.2–2.4×
+smaller** than the grouped payload (cosmx 17.6 MB vs 42.0 MB). The 500K-row cap
+stays as the backstop.
+
+**A second density slider was built and then removed.** The argument for one was
+that the graph draws far more lines than the filtered edge layer. It does not
+hold: unfiltered the two draw exactly the same number, and the graph already has
+an *opacity* control, which is the better lever for clutter — sampling down a
+layer whose purpose is to show complete structure misrepresents it. One slider
+now drives both.
 
 ### Two cell-metadata pickers, sending and receiving
 

@@ -416,10 +416,16 @@ All shared state lives in a single Zustand store. Key sections:
   panel 0 — the LayerPanel reads these instead of guessing from the schema dtype.
 - **Categorical override**: `categoricalOverrides`, keyed `cell::<field>` /
   `edge::<field>` → `true | false`; absent means auto-detect (issue #35).
-- **Metadata filter**: `cellFilter` / `edgeFilter`, each
-  `{ field, values, min, max, includeMissing }` or null (issue #45). `cellFilter`
-  also governs edges — both endpoints must survive it. Both reset on dataset change
-  (column names are dataset-specific); `edgeFilter` also resets on edge-file change.
+- **Metadata filters**: each is `{ field, values, min, max, includeMissing }` or null.
+  - `cellFilter` — the cell layers only. It no longer governs edges (issue #59):
+    filtering cells and filtering edges are independent actions.
+  - `sendingFilter` / `receivingFilter` — a *cell* metadata predicate on one end of
+    an edge. Both set gives the intersection; one set leaves the other end free.
+  - `edgeFilters` — a **list**, and-ed, on the edge table / `edge-metadata/`.
+
+  All reset on dataset change (column names are dataset-specific); `edgeFilters`
+  also resets on edge-file change, since those column names belong to one file
+  while cell metadata does not.
 - **Transcript gene filter**: `selectedGenes` — `null` = no filter (show all);
   `Set<string>` = allowlist (show only those genes). Dataset-scoped; resets on
   dataset change. See Gene Filter section below.
@@ -1127,6 +1133,15 @@ Things to preserve when editing these methods:
   the same rows or the layer visibly flickers.
 - **`USING SAMPLE` goes on a subquery** wrapping the filtered SELECT. Applied alongside a
   WHERE clause, DuckDB may sample before filtering.
+- **Edge density is a deterministic hash, not `USING SAMPLE`** (`density_predicate`).
+  The tissue graph and the edge data are two separate queries and must select the
+  *same* edges, or edge data is drawn where the graph beneath it was sampled away —
+  two independent bernoulli draws at 10% overlap only ~1% of the time. Hashing the
+  edge id gives every edge the same verdict in every query, so the predicate commutes
+  with the filters (density-then-filter and filter-then-density are one set) and
+  B ⊆ A holds at every density. It is also stable across re-fetches, where bernoulli
+  flickers on each pan. `backend/tests/edge_pipeline_check.py` asserts this on every
+  dataset.
 - **DuckDB cannot bind numpy scalars.** `bbox_predicate()` casts to builtin `float` for
   this reason.
 - A fresh `connect()` per call is deliberate — DuckDB's global connection is not
@@ -1227,19 +1242,31 @@ subset renders at full density.
   count and the sample**. The five implementations differ too much to share code:
   Xenium and CosMx join it into their DuckDB query, MERSCOPE skips non-matching rows
   before decoding WKB, Visium HD and seqFISH mask their in-memory frames.
-- `EdgeReader.query_grouped()` takes `cell_ids` and `edge_filter`. An edge survives
-  the cell filter only when **both** endpoints do — the point of "focus on 2–3 cell
-  types" is the signalling within that subset, and a half-outside edge would run off
-  to a cell that is not drawn. `edge_filter` becomes a real SQL predicate when the
-  column is in the parquet, and a semi-join against a registered frame when it comes
-  from `edge-metadata/`.
+- **`EdgeReader` runs one pipeline, and the order is the contract** (issue #59):
 
-  **The both-endpoints rule is slated to be reversed.** The lab's position is that
-  cell and edge filtration should be completely independent, and that the tissue
-  graph is ground truth that filtering must never subset — today one `useEdges`
-  request feeds both the graph and the edge layer, so both couplings are live. See
-  `docs/edge_filter_independence.md` (issue #59). The reasoning above is the decision
-  being reversed, kept because it explains what the code currently does.
+  ```
+  all edges in viewport
+    → density filter        deterministic, spatially random
+    → EDGESET A             → tissue-graph layer   (query_structure)
+    → sending filter
+    → receiving filter
+    → edge-table filters
+    → EDGESET B             → edge-data layer      (query_grouped)
+  ```
+
+  `query_structure` takes **no filter arguments at all** — not "they default to
+  none", but no parameter to pass — because the tissue graph is ground truth: the
+  total set of edges, shown or hidden, never subset.
+
+  `sending_ids` / `receiving_ids` constrain the two endpoints independently, so both
+  set gives the intersection and one set leaves the other end free. They resolve from
+  *cell* metadata via `filter_cell_ids`, and are independent of the cell layer's own
+  filter — an edge may terminate on a cell that is not drawn. That reverses an earlier
+  both-endpoints rule: filtering cells and filtering edges are separate actions.
+
+  `edge_filters` is a **list**, and-ed — the composition gap deferred in #45. Each
+  becomes a real SQL predicate when the column is in the parquet, and a semi-join
+  against a registered frame when it comes from `edge-metadata/`.
 
 **Large id sets go through `duck.register_ids()`, not `IN (?, ?, …)`.** A filter can
 keep hundreds of thousands of cells; binding that many parameters is unworkable and
@@ -1370,6 +1397,18 @@ If a probe changes and you cannot explain why, that is the point of the tool.
 cd frontend && npm test        # vitest run
 cd frontend && npm run test:watch
 ```
+
+Two further backend checks exist alongside the golden snapshot, both covering
+things it structurally cannot:
+
+```bash
+cd backend && python3 tests/edge_pipeline_check.py    # issue #59 invariants
+cd backend && python3 tests/duckdb_config_check.py    # DUCKDB_MEMORY_LIMIT forms
+```
+
+`edge_pipeline_check` asserts, on every dataset with edges and at several
+densities, that the tissue graph is unmoved by any filter, that the edge data is
+always a subset of it, and that sampling is stable between identical calls.
 
 `src/store.annotations.test.js` is the first of them. Store logic is plain JS, so
 these need no DOM and no jsdom dependency — reducers can be exercised directly
