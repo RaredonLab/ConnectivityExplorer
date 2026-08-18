@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.routers import tiles, spatial, edges, layers
 
-APP_VERSION = "0.8.6"
+APP_VERSION = "0.8.7"
 
 app = FastAPI(title="TissuePlex API", version=APP_VERSION)
 

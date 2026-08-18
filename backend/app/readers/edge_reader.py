@@ -357,6 +357,95 @@ class EdgeReader:
             conds.append(f'CAST("{col}" AS VARCHAR) {pred}')
         return (" AND ".join(conds), []) if conds else ("", [])
 
+    def neighborhood(self, cell_id: str, top_lrms: int = 12) -> dict | None:
+        """Everything a cell is connected to, unfiltered and unsampled (issue #60).
+
+        The neighbourhood is a property of the tissue, not of the current view, so
+        this deliberately ignores density, the viewport and every filter. Computing
+        it from the frontend's `edges` array instead would look like it worked and
+        be wrong twice over: that array is density-sampled (a tenth of the
+        neighbours by default) and viewport-bounded (missing any neighbour just
+        off-screen, and changing as you pan).
+
+        Direction is ignored for membership — a cell that only *sends* to this one
+        is still a neighbour — but the returned edge counts are directed, because
+        that is what the edge layer draws.
+
+        Returns None when the cell appears in no edge at all, which is an ordinary
+        outcome rather than an error.
+        """
+        cols = set(self._parquet_schema().names)
+        if not {"sending_cell", "receiving_cell"} <= cols:
+            return None
+        ps = self.pixel_size
+        has_lrm, has_score = "lrm" in cols, "score" in cols
+
+        with self._conn() as conn:
+            rows = conn.execute(f"""
+                SELECT * FROM {self._from()}
+                WHERE CAST("sending_cell" AS VARCHAR) = ?
+                   OR CAST("receiving_cell" AS VARCHAR) = ?
+            """, [str(cell_id), str(cell_id)]).df()
+        if rows.empty:
+            return None
+
+        me = str(cell_id)
+        send = rows["sending_cell"].astype(str)
+        recv = rows["receiving_cell"].astype(str)
+
+        # The partner cell, and the coordinates of whichever end is not us. Both
+        # come from the edge file, which is the one source every platform has —
+        # MERSCOPE and CosMx ship no boundary polygons to derive a centroid from.
+        partner = recv.where(send == me, send)
+        px = rows["x2"].where(send == me, rows["x1"]) if "x2" in rows else None
+        py = rows["y2"].where(send == me, rows["y1"]) if "y2" in rows else None
+
+        self_x = rows["x1"].where(send == me, rows["x2"]) if "x1" in rows else None
+        self_y = rows["y1"].where(send == me, rows["y2"]) if "y1" in rows else None
+        centre = ([float(self_x.iloc[0]) / ps, float(self_y.iloc[0]) / ps]
+                  if self_x is not None and len(self_x) else None)
+
+        # One point per distinct partner. Autocrine rows name us as the partner;
+        # they are counted separately rather than drawn as a neighbour of ourself.
+        pts, radius_px = [], 0.0
+        if px is not None:
+            frame = {}
+            for pid, x, y in zip(partner, px, py):
+                if pid == me or pid in frame:
+                    continue
+                frame[pid] = (float(x) / ps, float(y) / ps)
+            pts = [{"cell_id": k, "x": v[0], "y": v[1]} for k, v in frame.items()]
+            if centre and pts:
+                radius_px = max(((q["x"] - centre[0]) ** 2 +
+                                 (q["y"] - centre[1]) ** 2) ** 0.5 for q in pts)
+
+        neighbours = sorted({p for p in partner if p != me})
+
+        lrms = []
+        if has_lrm:
+            agg = rows.groupby("lrm", dropna=True)
+            summed = (agg["score"].sum() if has_score else agg.size()).sort_values(ascending=False)
+            lrms = [{"lrm": str(k),
+                     "value": float(v) if has_score else int(v),
+                     "n": int(agg.size()[k])}
+                    for k, v in summed.head(top_lrms).items()]
+
+        return {
+            "cell_id": me,
+            "center": centre,
+            "neighbors": neighbours,
+            "neighbor_points": pts,
+            "n_neighbors": len(neighbours),
+            # Directed edges incident to this cell, deduplicated by edge id — the
+            # raw rows are one per (edge x LRM), which would overcount by ~500x.
+            "n_edges": int(rows["edge"].nunique()) if "edge" in rows else len(rows),
+            "n_autocrine": int(((send == me) & (recv == me)).any()),
+            "radius_px": radius_px,
+            "radius_um": radius_px * ps,
+            "lrm_composition": lrms,
+            "score_basis": "score" if has_score else "count",
+        }
+
     def edge_detail(self, edge_id: str) -> dict | None:
         """Return all LRM rows for a single directed edge, structured for the info panel."""
         with self._conn() as conn:

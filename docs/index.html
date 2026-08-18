@@ -1170,6 +1170,37 @@ write.csv(
   shows the barcode ID, all metadata values for that cell, and the current
   color-by value highlighted. Click on empty canvas to dismiss.</p>
 
+  <h3>The Local Neighbourhood</h3>
+  <p>With a cell selected, <span class="ui">show local neighbourhood</span> at the
+  bottom of the info panel reveals everything that cell is connected to in the
+  tissue graph. The canvas marks the clicked cell in white, its connected
+  neighbours in yellow, and draws a circle at the distance of the furthest one.
+  The panel reports:</p>
+
+  <ul>
+    <li><strong>neighbours</strong> and <strong>local edges</strong> — how many
+    cells it touches, and how many directed edges that is;</li>
+    <li><strong>radius</strong> in µm, so the reach can be quoted without
+    measuring it off the screen;</li>
+    <li><strong>composition</strong> — the neighbours broken down by whichever
+    metadata column you are colouring cells by;</li>
+    <li><strong>mechanisms</strong> — the strongest LRMs across its edges.</li>
+  </ul>
+
+  <div class="note">
+    <p>The circle is a convenience, not the answer. Connectivity is not evenly
+    spread — a cell at the edge of a tissue has neighbours on one side only — so
+    the circle usually contains cells it is <em>not</em> connected to. The yellow
+    marks are the neighbourhood; the circle only shows how far it reaches.</p>
+  </div>
+
+  <div class="note">
+    <p>The summary is computed on the full data, so it is unaffected by the
+    density slider, by the sending and receiving filters, or by how far you are
+    zoomed in. It describes the tissue, not the current view. Clicking another
+    cell replaces it; <span class="ui">hide highlight</span> removes it.</p>
+  </div>
+
   <h3>Clicking on an Edge or Tissue Graph Line</h3>
   <p>Click on any line in the Tissue Graph or Directed Edges layer to open the
   <strong>Edge Info Panel</strong>, showing the sending and receiving cell

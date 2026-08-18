@@ -117,3 +117,42 @@ describe("clearing annotations is scoped to a panel", () => {
     expect(S().measurements).toEqual([]);
   });
 });
+
+describe("#60 — the neighbourhood highlight is scoped and cleared", () => {
+  const nb = { panelIndex: 1, cellId: "c1", data: { n_neighbors: 3 } };
+
+  beforeEach(() => {
+    useStore.setState({ neighborhood: null, selection: null });
+  });
+
+  it("is dropped when another cell is selected", () => {
+    // A highlight left over from a previous cell would sit on unrelated tissue
+    // and read as the answer for the cell now selected.
+    useStore.setState({ neighborhood: nb });
+    S().setSelectedCell({ cell_id: "c2" }, 1);
+    expect(S().neighborhood).toBeNull();
+  });
+
+  it("is dropped when an edge is selected, and when selection is cleared", () => {
+    useStore.setState({ neighborhood: nb });
+    S().setSelectedEdge({ edge: "a|b" }, 0);
+    expect(S().neighborhood).toBeNull();
+
+    useStore.setState({ neighborhood: nb });
+    S().clearSelection();
+    expect(S().neighborhood).toBeNull();
+  });
+
+  it("is dropped when its own panel changes dataset", () => {
+    // The ids and coordinates belong to the dataset that was showing.
+    useStore.setState({ neighborhood: nb });
+    S().setPanelDataset(1, "other-dataset");
+    expect(S().neighborhood).toBeNull();
+  });
+
+  it("survives a dataset change in the other panel", () => {
+    useStore.setState({ neighborhood: nb });
+    S().setPanelDataset(0, "other-dataset");
+    expect(S().neighborhood).toEqual(nb);
+  });
+});
