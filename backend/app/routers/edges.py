@@ -169,9 +169,27 @@ class EdgeGroupedQueryRequest(BaseModel):
     ymax: Optional[float] = None
     min_strength: Optional[float] = None
     density: float = 1.0   # fraction of viewport edges to return (0.01–1.0)
-    # cell_filter restricts by *cell* metadata: an edge survives only if both of
-    # its endpoints do. edge_filter restricts by a column of the edge table itself
-    # (or of edge-metadata/). They compose.
+
+    # Endpoint filters (issue #59). Each is a *cell* metadata predicate resolved
+    # against the cells table and applied to one end of the edge, so the two
+    # compose as an intersection: sender in A, receiver in B. Either may be
+    # omitted, leaving that end unconstrained.
+    #
+    # These are resolved against the cells table rather than the edge file's own
+    # sending_type/receiving_type: those are absent on five of six platforms as
+    # the r/ export scripts stand, carry one label where any cell column is
+    # wanted, and are frozen at scoring time. See docs/edge_filter_independence.md.
+    sending_filter: Optional[MetadataFilterSpec] = None
+    receiving_filter: Optional[MetadataFilterSpec] = None
+
+    # Filters on the edge table itself (or edge-metadata/), and-ed together.
+    # A list rather than one filter — the composition gap deferred in #45.
+    edge_filters: Optional[List[MetadataFilterSpec]] = None
+
+    # Superseded. cell_filter applied one cell predicate to *both* endpoints and
+    # tied edge visibility to the cell layer's filter; cell and edge filtering are
+    # now independent actions. edge_filter is the pre-list singular form. Both are
+    # still accepted so an older frontend against a newer backend keeps working.
     cell_filter: Optional[MetadataFilterSpec] = None
     edge_filter: Optional[MetadataFilterSpec] = None
 
@@ -194,6 +212,30 @@ def _cell_ids_for(dataset: str, spec: Optional[MetadataFilterSpec]) -> Optional[
         raise HTTPException(400, str(exc))
 
 
+class EdgeStructureRequest(BaseModel):
+    xmin: Optional[float] = None
+    ymin: Optional[float] = None
+    xmax: Optional[float] = None
+    ymax: Optional[float] = None
+    density: float = 1.0
+    # No filter fields, deliberately. The tissue graph is the total set of edges;
+    # see EdgeReader.query_structure.
+
+
+@router.post("/{dataset}/query-structure")
+def query_edge_structure(dataset: str, body: EdgeStructureRequest,
+                         edge_file: str = Query("edges.parquet")):
+    """Every edge in the viewport, unfiltered — the tissue-graph layer.
+
+    Separate from /query-grouped so that filtering the edge *data* can never
+    subset the structural graph, and so the two can be sampled independently.
+    """
+    bbox = (body.xmin, body.ymin, body.xmax, body.ymax) \
+        if body.xmin is not None else None
+    return _reader(dataset, edge_file).query_structure(
+        bbox=bbox, density=max(0.001, min(1.0, body.density)))
+
+
 @router.post("/{dataset}/query-grouped")
 def query_edges_grouped(dataset: str, body: EdgeGroupedQueryRequest,
                         edge_file: str = Query("edges.parquet")):
@@ -207,11 +249,24 @@ def query_edges_grouped(dataset: str, body: EdgeGroupedQueryRequest,
         if body.xmin is not None else None
     density = max(0.001, min(1.0, body.density))
     try:
+        # Legacy cell_filter means "both endpoints", i.e. the same set on each.
+        legacy = _cell_ids_for(dataset, body.cell_filter)
+        sending = _cell_ids_for(dataset, body.sending_filter)
+        receiving = _cell_ids_for(dataset, body.receiving_filter)
+        if legacy is not None:
+            sending = legacy if sending is None else sending & legacy
+            receiving = legacy if receiving is None else receiving & legacy
+
+        filters = [f.build() for f in (body.edge_filters or [])]
+        if body.edge_filter is not None:
+            filters.append(body.edge_filter.build())
+
         return _reader(dataset, edge_file).query_grouped(
             bbox=bbox,
             density=density,
-            cell_ids=_cell_ids_for(dataset, body.cell_filter),
-            edge_filter=body.edge_filter.build() if body.edge_filter else None,
+            sending_ids=sending,
+            receiving_ids=receiving,
+            edge_filters=[f for f in filters if f is not None],
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc))

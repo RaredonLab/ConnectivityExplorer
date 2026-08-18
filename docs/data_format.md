@@ -62,8 +62,19 @@ TissuePlex discovers `edges.parquet` automatically — no configuration needed. 
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `sending_type` | string | Cell/spot type label for the sending unit |
-| `receiving_type` | string | Cell/spot type label for the receiving unit |
+| `sending_type` | string | Cell/spot type label for the sending unit — **optional, often absent** |
+| `receiving_type` | string | Cell/spot type label for the receiving unit — **optional, often absent** |
+
+**Do not rely on `sending_type` / `receiving_type`.** `export_to_TissuePlex()`
+populates them only when given a `celltype.col`, and of the scripts in `r/` only
+`niches_xenium.R` exposes that (`--celltype`); the other five pass
+`celltype.col = NULL`, so the columns are absent. The values in the bundled
+`sample_data` fixtures are *simulated* by `make_edges.py`, not analysis output.
+
+They are also frozen at scoring time, so they can disagree with a cells table
+that has since been re-annotated through `cell-metadata/`. Anything that needs a
+cell attribute per edge should resolve it against the cells table instead — see
+`docs/edge_filter_independence.md`.
 
 `export_to_TissuePlex()` **always writes these two columns**, so a file it produces has
 exactly the 16 columns above, in that order. Their *values* are `NA` when

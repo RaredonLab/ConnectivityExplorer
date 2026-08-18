@@ -136,7 +136,8 @@ function ViewerPanel({ panelIndex }) {
     autocrineRadius, autocrineLineWidth,
     hiddenLrms,
     cellColorClamp, edgeColorClamp, setEdgeColorClamp, linkColorScale,
-    categoricalOverrides, cellFilter, edgeFilter,
+    categoricalOverrides, cellFilter,
+    sendingFilter, receivingFilter, edgeFilters,
     annotationMode,
     clearZoomMatch,
     activeRegion, addRegionPoint, cancelActiveRegion, commitRegion,
@@ -628,10 +629,18 @@ function ViewerPanel({ panelIndex }) {
     patch({ cellBoundaryStats: { shown: cellPolygons.length, total: cellBoundaryTotal } });
   }, [cellPolygons.length, cellBoundaryTotal]); // eslint-disable-line
 
-  const { edges, loading: edgesLoading } = useEdges(
-    apiBase, dataset, viewport, imageSize, edgesVisible || tissueGraphVisible,
+  // `edges` is the filtered edge-data layer; `graphEdges` is the unfiltered
+  // tissue graph. Two arrays from two requests — the graph is ground truth and
+  // must never be narrowed by an edge filter. cellFilter is deliberately absent:
+  // filtering cells and filtering edges are independent actions.
+  const { edges, graphEdges, loading: edgesLoading } = useEdges(
+    apiBase, dataset, viewport, imageSize, edgesVisible,
     edgeMinStrength, hiddenLrms, lrmCatalogue, edgeDensity, edgeFile,
-    cellFilter, edgeFilter
+    { sendingFilter, receivingFilter, edgeFilters,
+      // One density drives both fetches. It is a rendering-volume control, and
+      // the graph has its own opacity for visual weight — a better lever for
+      // clutter than sampling, which would misrepresent the structure.
+      graphEnabled: tissueGraphVisible, graphDensity: edgeDensity }
   );
 
   // Explicit categorical/continuous choice for the active color-by column, or
@@ -859,7 +868,7 @@ function ViewerPanel({ panelIndex }) {
 
   const tissueGraphLayer = new LineLayer({
     id: "tissue-graph",
-    data: allDirectedEdges,
+    data: graphEdges,
     modelMatrix: rotModelMatrix,
     visible: tissueGraphVisible,
     opacity: tissueGraphOpacity,

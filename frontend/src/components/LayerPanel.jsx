@@ -136,7 +136,7 @@ export default function LayerPanel() {
       <div style={SECTION_HEADER}>Tissue Graph</div>
       <TissueGraphSection />
 
-      <DensityRow />
+      <EdgeDensityRow />
 
       <div style={SECTION_HEADER}>Edge Data</div>
       <EdgeSection />
@@ -737,6 +737,70 @@ function CellFilterSection({ unitLabel = "cell" }) {
       scope="cell" columns={columns} filter={cellFilter} setFilter={setCellFilter}
       fetchValues={fetchValues} unitLabel={unitLabel}
     />
+  );
+}
+
+/**
+ * Issue #59 — the two endpoint filters, side by side.
+ *
+ * Both select from *cell* metadata, the same vocabulary the cell filter offers,
+ * and each constrains one end of an edge. Set both and you get the intersection:
+ * senders in A, receivers in B. Leave one unset and that end is unconstrained.
+ *
+ * These resolve against the cells table rather than the edge file's own
+ * `sending_type` / `receiving_type`, which are absent on five of six platforms as
+ * the r/ export scripts stand, carry one label where any cell column is wanted,
+ * and are frozen at scoring time. See docs/edge_filter_independence.md.
+ *
+ * Independent of the Cell Filter above it: filtering cells and filtering edges
+ * are separate actions, so an edge may terminate on a cell that is not drawn.
+ */
+function EndpointFilterSection() {
+  const { apiBase, sendingFilter, setSendingFilter,
+          receivingFilter, setReceivingFilter, categoricalOverrides } = usePanelSettings();
+  const datasets = useActiveDatasets();
+  const columns = useUnionList((d) =>
+    fetch(`${apiBase}/spatial/${d}/cells/schema`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((x) => (x?.columns ? Object.keys(x.columns) : [])));
+
+  const fetchValues = React.useCallback((field) => {
+    const categorical = categoricalOverrides[`cell::${field}`] ?? null;
+    return mergeColorValues(datasets.map((d) =>
+      fetch(`${apiBase}/spatial/${d}/color-values`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "metadata", field, categorical }),
+      }).then((r) => (r.ok ? r.json() : null)).catch(() => null)));
+  }, [apiBase, datasets.join(" "), categoricalOverrides]); // eslint-disable-line
+
+  if (!columns.length) return null;
+
+  const side = (label, filter, setFilter) => (
+    // minWidth 0 lets the select shrink inside the flex row instead of forcing
+    // the sidebar to scroll sideways.
+    <div style={{ flex: 1, minWidth: 0 }}>
+      <div style={{ fontSize: 10, color: "#777", marginBottom: 2 }}>{label}</div>
+      <MetadataFilterSection
+        scope="cell" columns={columns} filter={filter} setFilter={setFilter}
+        fetchValues={fetchValues} unitLabel="cell"
+      />
+    </div>
+  );
+
+  return (
+    <div style={{ marginBottom: 6 }}>
+      <div style={{ display: "flex", gap: 6, alignItems: "flex-start" }}>
+        {side("Sending cell", sendingFilter, setSendingFilter)}
+        {side("Receiving cell", receivingFilter, setReceivingFilter)}
+      </div>
+      {sendingFilter && receivingFilter && (
+        <div style={{ fontSize: 10, color: "#777", marginTop: 3 }}>
+          showing edges from <span style={{ color: "#8af" }}>{sendingFilter.field}</span>
+          {" → "}<span style={{ color: "#8af" }}>{receivingFilter.field}</span> only
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1380,22 +1444,40 @@ const CHIP_STYLE = {
 };
 
 // ── Density row (top-level — applies to tissue graph + edge data) ─────────────
-function DensityRow() {
-  const { edgeDensity, setEdgeDensity } = usePanelSettings();
+/**
+ * A rendering-volume control, not a filter.
+ *
+ * One slider drives both the tissue graph and the edge-data layer. They are
+ * separate *requests* — the graph is never filtered — but they do not need
+ * separate volume controls: unfiltered the two draw the same number of lines,
+ * and when the edge layer is filtered down, the graph's own opacity (5% by
+ * default) is the better lever for clutter. Sampling the graph to reduce clutter
+ * would misrepresent the structure of something that is meant to be ground truth.
+ *
+ * Sampling is applied last on both paths, after every filter, so lowering it
+ * never changes *which* edges qualify — only how many of them are drawn.
+ */
+function DensityRow({ label, value, onChange, note }) {
   return (
     <div style={{ marginBottom: 8 }}>
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#555", marginBottom: 2 }}>
-        <span>density: {Math.round(edgeDensity * 100)}%{edgeDensity >= 1.0 ? " (all)" : ""}</span>
-        <span style={{ color: "#3a3a3a" }}>tissue graph + edges</span>
+        <span>{label}: {Math.round(value * 100)}%{value >= 1.0 ? " (all)" : ""}</span>
+        <span style={{ color: "#3a3a3a" }}>{note}</span>
       </div>
       <input
         type="range" min={0.01} max={1} step={0.01}
-        value={edgeDensity}
-        onChange={(e) => setEdgeDensity(parseFloat(e.target.value))}
+        value={value}
+        onChange={(e) => onChange(parseFloat(e.target.value))}
         style={{ width: "100%", accentColor: "#888", cursor: "pointer" }}
       />
     </div>
   );
+}
+
+function EdgeDensityRow() {
+  const { edgeDensity, setEdgeDensity } = usePanelSettings();
+  return <DensityRow label="density" value={edgeDensity} onChange={setEdgeDensity}
+                     note="tissue graph + edges" />;
 }
 
 // ── Tissue graph section ──────────────────────────────────────────────────────
@@ -1743,6 +1825,7 @@ function EdgeSection() {
               attribute of the pair (a curation call, a confidence), whereas the
               checklist subsets the mechanisms scored on every edge. */}
           <div style={{ ...SECTION_HEADER, marginTop: 10 }}>Edge Filter</div>
+          <EndpointFilterSection />
           <EdgeFilterSection />
 
           {/* ── LRM Mechanisms checklist ─────────────────────────────── */}

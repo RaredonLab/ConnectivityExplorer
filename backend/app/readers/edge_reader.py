@@ -27,6 +27,53 @@ from app.readers.metadata_filter import MetadataFilter
 _UNSET = object()
 
 
+# The pipeline, in one place:
+#
+#     all edges in viewport
+#       → density filter          (spatially random, this predicate)
+#       → EDGESET A               → tissue-graph layer
+#       → sending filter
+#       → receiving filter
+#       → edge-table filters
+#       → EDGESET B               → edge-data layer
+#
+# So B ⊆ A always: edge data can never be drawn where the graph beneath it has
+# been sampled away.
+#
+# The two layers are fetched by separate queries, and the order above is only
+# guaranteed because this predicate is *deterministic per edge*. A given edge
+# gets the same verdict in every query regardless of what else ran, so the
+# predicate commutes with the filters and "density then filter" and "filter then
+# density" select the identical set.
+#
+# `USING SAMPLE` cannot do this. Two independent bernoulli draws at 10% give the
+# graph one random tenth and the edge layer a different one — an overlap of ~1%,
+# with edge data floating free of the structure it is supposed to sit on.
+#
+# A deterministic hash of the edge identity fixes that. The same edge gets the
+# same verdict in every query, whatever filters ran, so the edge layer is always
+# a subset of the graph:
+#
+#     graph      = { e : keep(e) }
+#     edge data  = { e : passes_filters(e) and keep(e) }  ⊆ graph
+#
+# It is also spatially uniform (the hash ignores position) and stable across
+# re-fetches, which matters because the alternative flickers on every pan.
+#
+# Unlike USING SAMPLE this is an ordinary predicate, so it composes with the
+# filters by AND and cannot be reordered below them — the property the
+# subquery-wrapping was there to guarantee.
+_DENSITY_MODULUS = 1_000_000
+
+
+def density_predicate(density: float, key_sql: str = '"edge"') -> str:
+    """SQL keeping a deterministic, spatially uniform fraction of edges."""
+    if density is None or density >= 1.0:
+        return ""
+    cut = max(1, int(density * _DENSITY_MODULUS))
+    return f"(hash(CAST({key_sql} AS VARCHAR)) % {_DENSITY_MODULUS}) < {cut}"
+
+
 class EdgeReader:
     def __init__(self, path: Path, pixel_size: float = 1.0):
         self.path = path
@@ -273,21 +320,42 @@ class EdgeReader:
         return f'CAST("edge" AS VARCHAR) {pred}', []
 
     @staticmethod
-    def cell_filter_sql(cell_ids: Optional[set], conn) -> tuple[str, list]:
-        """WHERE fragment keeping only edges whose **both** endpoints survive the
-        cell filter.
+    def endpoint_filter_sql(
+        sending_ids: Optional[set],
+        receiving_ids: Optional[set],
+        conn,
+    ) -> tuple[str, list]:
+        """WHERE fragment constraining each endpoint of an edge independently.
 
-        Both, not either: the point of "focus on 2–3 cell types" is the signalling
-        *within* that subset. An edge with one endpoint outside would be drawn
-        running off to a cell that is not on screen.
+        Either side may be None, which leaves that end unconstrained — so setting
+        only `sending_ids` answers "everything sent *from* these cells, to
+        anywhere". With both set the result is the intersection: an edge is kept
+        when its sender is in one set and its receiver in the other.
+
+        This replaces a single set applied to both ends. That older rule tied edge
+        visibility to the *cell* filter, which the lab wants independent: filtering
+        cells is one action, filtering edges another, and an edge may now terminate
+        on a cell that is not drawn. See docs/edge_filter_independence.md.
+
+        An empty set means "nothing matches" and short-circuits to FALSE. It must
+        not fall through to no-predicate, or a filter matching no cells would
+        return every edge — and `register_ids` refuses an empty frame anyway.
+
+        Both predicates are ordinary semi-joins in the WHERE clause, so they run
+        before the GROUP BY and before the density sample.
         """
-        if cell_ids is None:
-            return "", []
-        if not cell_ids:
-            return "FALSE", []
-        pred = duck.register_ids(conn, cell_ids, name="tp_cell_filter")
-        return (f'CAST("sending_cell" AS VARCHAR) {pred} '
-                f'AND CAST("receiving_cell" AS VARCHAR) {pred}'), []
+        conds: list[str] = []
+        for ids, col, name in (
+            (sending_ids,   "sending_cell",   "tp_send_filter"),
+            (receiving_ids, "receiving_cell", "tp_recv_filter"),
+        ):
+            if ids is None:
+                continue
+            if not ids:
+                return "FALSE", []
+            pred = duck.register_ids(conn, ids, name=name)
+            conds.append(f'CAST("{col}" AS VARCHAR) {pred}')
+        return (" AND ".join(conds), []) if conds else ("", [])
 
     def edge_detail(self, edge_id: str) -> dict | None:
         """Return all LRM rows for a single directed edge, structured for the info panel."""
@@ -357,14 +425,74 @@ class EdgeReader:
             ).df().iloc[:, 0].tolist()
         return {"type": "categorical", "values": vals, "count": len(vals)}
 
+    def query_structure(
+        self,
+        bbox: Optional[tuple] = None,
+        density: float = 1.0,
+        max_limit: int = 500_000,
+    ) -> list[dict]:
+        """Every distinct edge in the viewport, with no filters of any kind.
+
+        This backs the tissue-graph layer, which is *ground truth*: the total set
+        of edges, shown or hidden, never subset. It deliberately takes no filter
+        arguments at all — not "filters default to none", but no way to pass one,
+        so the layer cannot be narrowed by a future caller wiring one through.
+
+        It is a separate query from `query_grouped`, not a flag on it, because the
+        two want opposite orderings of the same pipeline. The edge-data layer must
+        filter *then* sample, so a rare subset draws at full density; the graph
+        must not filter at all. Returning every edge with a `passes_filter` column
+        would sample the rare subset away before the flag was ever read.
+
+        The projection is deliberately lean — `edge` and the four coordinates.
+        Scores, types and LRM counts are most of `query_grouped`'s payload and the
+        structural layer draws none of them; `edge` is kept only because the layer
+        is pickable and the info panel resolves by id.
+        """
+        cols = set(self._parquet_schema().names)
+        if not {"x1", "y1", "x2", "y2"} <= cols:
+            return []
+        ps = self.pixel_size
+
+        where, params = "", []
+        if bbox and None not in bbox:
+            xmin, ymin, xmax, ymax = (v * ps for v in bbox)
+            where = ("WHERE ((x1 >= ? AND x1 <= ? AND y1 >= ? AND y1 <= ?) OR "
+                     "(x2 >= ? AND x2 <= ? AND y2 >= ? AND y2 <= ?))")
+            params = [xmin, xmax, ymin, ymax, xmin, xmax, ymin, ymax]
+
+        has_edge = "edge" in cols
+        key = "edge" if has_edge else "x1, y1, x2, y2"
+        sel = ("edge, " if has_edge else "") + \
+              "FIRST(x1) AS x1, FIRST(y1) AS y1, FIRST(x2) AS x2, FIRST(y2) AS y2"
+        # The *same* predicate query_grouped uses, on the same key, so the two
+        # layers select an identical subset and edge data is never drawn where
+        # the graph beneath it has been sampled away.
+        dens = density_predicate(
+            density, '"edge"' if has_edge else "concat_ws('|',x1,y1,x2,y2)")
+        sample = f"WHERE {dens}" if dens else ""
+
+        with self._conn() as conn:
+            df = conn.execute(f"""
+                SELECT * FROM (
+                    SELECT {sel} FROM {self._from()} {where} GROUP BY {key}
+                ) {sample}
+                LIMIT {max_limit}
+            """, params).df()
+
+        for c in ("x1", "y1", "x2", "y2"):
+            df[c] = df[c] / ps
+        return df.to_dict("records")
+
     def query_grouped(
         self,
         bbox: Optional[tuple] = None,
         min_lrm_count: int = 1,
         density: float = 1.0,
         max_limit: int = 500_000,
-        cell_ids: Optional[set] = None,
-        edge_filter: Optional[MetadataFilter] = None,
+        sending_ids: Optional[set] = None,
+        receiving_ids: Optional[set] = None,
+        edge_filters: Optional[list] = None,
     ) -> list[dict]:
         """
         Return one row per directed edge (GROUP BY edge), pre-aggregated.
@@ -382,10 +510,13 @@ class EdgeReader:
         density<1.0 uses bernoulli sampling so each edge is independently
         included with probability `density` — spatially uniform.
 
-        `cell_ids` and `edge_filter` are the metadata filters from issue #45. Both
-        go into the WHERE clause, so they run before the GROUP BY and before the
-        density sample: filtering to a rare cell type keeps that type's edges at
-        full density rather than sampling them away.
+        `sending_ids` / `receiving_ids` constrain the two endpoints independently
+        (issue #59); `edge_filters` is a list of MetadataFilter and-ed together,
+        which is the composition #45 deferred. All of them go into the WHERE
+        clause, so they run before the GROUP BY and before the density sample:
+        narrowing to a rare subset keeps it at full density rather than sampling
+        it away. Density is last, and deliberately so — it is a rendering-volume
+        control, not a selection criterion.
         """
         ps = self.pixel_size
         schema_names = set(self._parquet_schema().names)
@@ -428,13 +559,10 @@ class EdgeReader:
 
         select = ", ".join(agg_cols)
 
-        # Bernoulli sampling: each grouped edge row is included independently
-        # at probability `density`. At density=1.0 no sampling clause is added
-        # and all viewport edges are returned (up to max_limit safety cap).
-        sample_clause = (
-            f"USING SAMPLE {density * 100:.4f} PERCENT (bernoulli)"
-            if density < 1.0 else ""
-        )
+        # Deterministic, shared with query_structure so the edge layer is always a
+        # subset of the tissue graph at the same density. See density_predicate.
+        dens = density_predicate(density)
+        sample_clause = f"WHERE {dens}" if dens else ""
 
         # The connection is opened before the WHERE clause is finalised because the
         # metadata filters may need to register a relation on it to semi-join
@@ -444,13 +572,12 @@ class EdgeReader:
         # An edge file without endpoint columns cannot be filtered by cell; the
         # tissue graph still draws, it just ignores the cell subset.
         if not {"sending_cell", "receiving_cell"} <= schema_names:
-            cell_ids = None
+            sending_ids = receiving_ids = None
 
         with self._conn() as conn:
-            for cond, prm in (
-                self.cell_filter_sql(cell_ids, conn),
-                self.edge_filter_sql(edge_filter, conn),
-            ):
+            fragments = [self.endpoint_filter_sql(sending_ids, receiving_ids, conn)]
+            fragments += [self.edge_filter_sql(f, conn) for f in (edge_filters or [])]
+            for cond, prm in fragments:
                 if cond:
                     where_conditions.append(cond)
                     where_params.extend(prm)

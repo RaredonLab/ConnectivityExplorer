@@ -179,6 +179,17 @@
       ],
       "n": 169219
     },
+    "edge__edges.parquet__structure": {
+      "digest": "c41185a78aa1dea2",
+      "keys": [
+        "edge",
+        "x1",
+        "x2",
+        "y1",
+        "y2"
+      ],
+      "n": 169219
+    },
     "gene_list": {
       "digest": "b4a6b682f016cebd",
       "n": 960
@@ -388,6 +399,17 @@
         "edge",
         "visible_lrm_count",
         "visible_score_sum"
+      ],
+      "n": 14503
+    },
+    "edge__edges.parquet__structure": {
+      "digest": "e5e502e5a4f78494",
+      "keys": [
+        "edge",
+        "x1",
+        "x2",
+        "y1",
+        "y2"
       ],
       "n": 14503
     },
@@ -626,6 +648,17 @@
       ],
       "n": 223
     },
+    "edge__edges.parquet__structure": {
+      "digest": "0676dafca6cb1c65",
+      "keys": [
+        "edge",
+        "x1",
+        "x2",
+        "y1",
+        "y2"
+      ],
+      "n": 223
+    },
     "edge__edges__edge.normalized.product.parquet__catalogue": {
       "digest": "556c70f23429ddd8",
       "n": 20
@@ -703,6 +736,17 @@
       ],
       "n": 289
     },
+    "edge__edges__edge.normalized.product.parquet__structure": {
+      "digest": "a7f95b42286cb2bf",
+      "keys": [
+        "edge",
+        "x1",
+        "x2",
+        "y1",
+        "y2"
+      ],
+      "n": 289
+    },
     "edge__edges__edge.raw.minimum.parquet__catalogue": {
       "digest": "556c70f23429ddd8",
       "n": 20
@@ -777,6 +821,17 @@
         "edge",
         "visible_lrm_count",
         "visible_score_sum"
+      ],
+      "n": 155
+    },
+    "edge__edges__edge.raw.minimum.parquet__structure": {
+      "digest": "2cea4f58c308f7c1",
+      "keys": [
+        "edge",
+        "x1",
+        "x2",
+        "y1",
+        "y2"
       ],
       "n": 155
     },
@@ -1034,6 +1089,17 @@
       ],
       "n": 372
     },
+    "edge__edges.parquet__structure": {
+      "digest": "dcebdff0bd9e434e",
+      "keys": [
+        "edge",
+        "x1",
+        "x2",
+        "y1",
+        "y2"
+      ],
+      "n": 372
+    },
     "gene_list": {
       "digest": "6f1e76b0bd839528",
       "n": 12
@@ -1242,6 +1308,17 @@
         "edge",
         "visible_lrm_count",
         "visible_score_sum"
+      ],
+      "n": 250
+    },
+    "edge__edges.parquet__structure": {
+      "digest": "1be5a577ef35b7a4",
+      "keys": [
+        "edge",
+        "x1",
+        "x2",
+        "y1",
+        "y2"
       ],
       "n": 250
     },
@@ -1454,6 +1531,17 @@
       ],
       "n": 66001
     },
+    "edge__edges.parquet__structure": {
+      "digest": "b51d25a17fca5fc2",
+      "keys": [
+        "edge",
+        "x1",
+        "x2",
+        "y1",
+        "y2"
+      ],
+      "n": 66001
+    },
     "gene_list": {
       "digest": "40a2e076472f6c63",
       "n": 32245
@@ -1628,6 +1716,17 @@
         "edge",
         "visible_lrm_count",
         "visible_score_sum"
+      ],
+      "n": 1642
+    },
+    "edge__edges.parquet__structure": {
+      "digest": "f8bfac32075532cd",
+      "keys": [
+        "edge",
+        "x1",
+        "x2",
+        "y1",
+        "y2"
       ],
       "n": 1642
     },
@@ -1831,6 +1930,17 @@
       ],
       "n": 44759
     },
+    "edge__edges.parquet__structure": {
+      "digest": "f9eacf53fffc98ca",
+      "keys": [
+        "edge",
+        "x1",
+        "x2",
+        "y1",
+        "y2"
+      ],
+      "n": 44759
+    },
     "edge__edges__niches_rad30.parquet__catalogue": {
       "digest": "931e3a76e6dcb943",
       "n": 32
@@ -1905,6 +2015,17 @@
         "edge",
         "visible_lrm_count",
         "visible_score_sum"
+      ],
+      "n": 181523
+    },
+    "edge__edges__niches_rad30.parquet__structure": {
+      "digest": "abc6dda554c2ad29",
+      "keys": [
+        "edge",
+        "x1",
+        "x2",
+        "y1",
+        "y2"
       ],
       "n": 181523
     },
