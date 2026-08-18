@@ -22,22 +22,52 @@ change current behaviour:
 
 ---
 
-## What already works
+## What already works, and why it does not count
 
-Half of #59 ships today and is worth knowing before building anything.
-`sending_type` and `receiving_type` are real populated columns in
-`edges.parquet`, they are not in `EDGE_FILTER_SKIP`, so the edge filter dropdown
-already offers them. Measured on `mouse_ileum_tiny`:
+`sending_type` / `receiving_type` are in `edges.parquet` and are not in
+`EDGE_FILTER_SKIP`, so the edge filter dropdown already offers them. Filtering
+one side works mechanically — measured on `mouse_ileum_tiny`:
 
 | filter | edges | sending types in result | receiving types in result |
 |---|---|---|---|
 | none | 223 | all five | all five |
 | `sending_type = Fibroblast` | 55 | `Fibroblast` only | all five |
 
-So one-sided filtering works. **The blocker is that `edgeFilter` holds exactly
-one filter** — the composition gap deliberately deferred in issue #45 — so
-"sending = Fibroblast *and* receiving = Endothelial" cannot be expressed. That
-limit, not the sending/receiving distinction, is what needs fixing.
+**This is not the feature, and the demo above is misleading.** Tracing where
+those labels come from:
+
+| source | populates the column? |
+|---|---|
+| `sample_data/make_edges.py` | yes — its own docstring says `cell type (simulated)` |
+| `r/niches_xenium.R` | only with an explicit `--celltype <column>` flag |
+| `niches_cosmx/merscope/seqfish/visium/visium_hd.R` | **no** — all pass `celltype.col = NULL` |
+
+So the five tidy labels above (`Endothelial`, `Immune`, `Fibroblast`, …) are
+**invented by the fixture generator**. On real output the column is absent on
+five of six platforms as the export scripts are written today, and present on
+Xenium only if the user opted in. It also carries exactly one column, where the
+ask is "any cell metadata column" — `mouse_ileum_tiny`'s cells table has
+`cluster`, `region`, `pseudotime` and `seurat_clusters`, none of which appears in
+the edge file.
+
+The conclusion is not "half of #59 ships" — it is that the mechanism exists but
+is pointed at the wrong source. The real blocker is twofold: `edgeFilter` holds
+exactly one filter (the composition gap deferred in #45), and the only column it
+can reach is one that mostly is not there.
+
+### Should `sending_type` exist at all?
+
+Worth deciding separately, and it is a NICHESv2-side question more than a
+TissuePlex one. The case against: it duplicates cell metadata into the edge
+table, freezing it at scoring time, and creates two sources of truth for the same
+question — re-annotate cells through `cell-metadata/` and the edge file still says
+the old thing. The case for: if NICHESv2 *used* the label when scoring, then it is
+provenance rather than duplication, and the honest record of what produced the
+number. Which of those is true is not answerable from this repo.
+
+Either way it should not back the two dropdowns. If it stays, document it as
+"the label used at scoring time — may be absent, may be stale", and leave it
+reachable through the edge-column filter where that framing is visible.
 
 ## Directive 3 already holds — preserve it
 
@@ -119,29 +149,51 @@ slider of its own, and the existing 500K-row cap stays as the backstop. A
 doing at the same time: the structural layer draws lines and needs no scores,
 types or LRM counts, which is most of the payload.
 
-### Edge filters become a list, and gain two cell-derived slots
+### Two cell-metadata pickers, sending and receiving
 
-`edgeFilter` becomes `edgeFilters: MetadataFilter[]`, and-ed together. That alone
-closes #45's deferred half and makes "sending = X and receiving = Y" expressible
-against `edges.parquet` columns.
-
-For predicates on cell metadata that is *not* in `edges.parquet` — anything from
-`cell-metadata/`, or a column the R export did not copy — two new spec slots
-resolve through the existing cell path:
+This is the feature, not an add-on to an edge-column filter. The edge section
+gets **two dropdowns side by side** — *sending cell* and *receiving cell* — and
+each selects **any cell metadata column**, the same vocabulary the cell filter
+offers. An edge is drawn when **both** sides are satisfied: the intersection.
 
 ```
-sendingFilter   : MetadataFilter | null   →  filter_cell_ids() → id set S_send
-receivingFilter : MetadataFilter | null   →  filter_cell_ids() → id set S_recv
+Sending cell                 Receiving cell
+[ region        ▾ ]          [ cluster       ▾ ]
+[x] crypt                    [x] 3
+[ ] mid                      [ ] 4
+[ ] villus                   [x] 7
 ```
 
-`SpatialDatasetReader.filter_cell_ids(spec)` already resolves a cell-metadata
-predicate to an id set and caches per (reader, spec). `duck.register_ids()`
-already turns a large set into a hash semi-join rather than an unusable
-`IN (?, ?, …)` list. The only change in `edge_reader.py` is to stop applying one
-set to both ends:
+Either side may be left unset, which leaves that end unconstrained — so one
+dropdown alone answers "everything sent *from* crypt cells, to anywhere".
+
+### Resolve through the cells table, never the edge file's own labels
+
+Filtering on the edge file's own `sending_type` would be a plain SQL predicate,
+cheaper than resolving an id set. It is still the wrong source, for three reasons
+set out above: the column is **absent** on five of six platforms as the export
+scripts stand, it carries **one** label where the ask is any column, and it is
+**frozen** at scoring time so it can silently disagree with a re-annotated cells
+table.
+
+A fast path for the one case where it happens to be present would mean two code
+paths answering the same question differently depending on which one ran — the
+kind of disagreement that is very hard to notice in a figure.
+
+So both dropdowns resolve through `filter_cell_ids()` against the cells table,
+uniformly, with no fast path. The parquet's own labels stay reachable through the
+separate edge-column filter, where they are honestly labelled as the as-scored
+values.
+
+### The backend change
+
+`filter_cell_ids(spec)` already resolves a cell-metadata predicate to an id set
+and caches per (reader, spec). `duck.register_ids()` already turns a large set
+into a hash semi-join rather than an unusable `IN (?, ?, …)` list. The only change
+in `edge_reader.py` is to stop applying one set to both ends:
 
 ```python
-# now
+# now — one set, both endpoints
 pred = duck.register_ids(conn, cell_ids, name="tp_cell_filter")
 f'CAST("sending_cell" AS VARCHAR) {pred} AND CAST("receiving_cell" AS VARCHAR) {pred}'
 
@@ -150,9 +202,20 @@ send = duck.register_ids(conn, sending_ids,   name="tp_send_filter")
 recv = duck.register_ids(conn, receiving_ids, name="tp_recv_filter")
 ```
 
+Both predicates go in the same `WHERE` clause, so they run before the `GROUP BY`
+and before the sample — the ordering directive 3 requires.
+
 **Answering the issue's efficiency question directly:** this is the same cost as
-today. One hash semi-join becomes two, on a query that already performs one, and
-both run in the WHERE clause before the GROUP BY and before sampling.
+today. One hash semi-join becomes two, on a query that already performs one.
+
+### Edge-column filters stay, and become a list
+
+Separately from the two pickers, `edgeFilter` becomes `edgeFilters:
+MetadataFilter[]`, and-ed together. This is what `edge-metadata/` annotations
+(a confidence, a review flag) and the parquet's own columns are filtered through,
+and it closes the composition gap deferred in #45. It is a smaller, independent
+win — the two cell-metadata pickers are what #59 actually asks for.
+
 
 ### Cell filtering stops touching edges
 
@@ -223,8 +286,9 @@ manual's filter section needs the same correction, plus the autocrine note.
 
 Frontend store tests exist now (Vitest, 46), and the filter-targeting logic is
 plain reducer code — the `edgeFilters` migration and the push-guard change belong
-there. On the backend, the decisive check is a query-level one: for a dataset with
-populated `sending_type`, assert that filtering sending alone leaves the receiving
-distribution untouched (verified by hand above: 55 edges, one sending type, all
-five receiving types), and that the tissue-graph endpoint returns an identical
-count with and without every filter applied.
+there. On the backend the decisive checks are query-level, and should use a **cell
+metadata column** rather than `sending_type`, which the fixture only simulates:
+filtering sending alone must leave the receiving distribution untouched; the two
+sides together must return the intersection; and the tissue-graph endpoint must
+return an identical count with and without every filter applied, which is
+directive 1 stated as an assertion.

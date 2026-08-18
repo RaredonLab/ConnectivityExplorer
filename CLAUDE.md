@@ -240,8 +240,16 @@ Platform-agnostic — works with any spatial dataset as long as cell barcodes ma
 | `score_norm` | float | Score normalized within edge (sums to 1) |
 | `x1`, `y1` | float | Sending cell centroid, native µm coords |
 | `x2`, `y2` | float | Receiving cell centroid |
-| `sending_type` | string | Optional cell type label |
-| `receiving_type` | string | Optional cell type label |
+| `sending_type` | string | Optional cell type label — **often absent; see below** |
+| `receiving_type` | string | Optional cell type label — **often absent; see below** |
+
+**`sending_type` / `receiving_type` cannot be relied on.** NICHESv2 populates them
+only when given a `celltype.col`, and only `r/niches_xenium.R` exposes that flag
+(`--celltype`) — the other five scripts pass `celltype.col = NULL`, so the columns
+are simply not there. The values in `sample_data` are *simulated* by
+`make_edges.py`. They are also frozen at scoring time and can disagree with a cells
+table re-annotated since. Resolve cell attributes per edge against the cells table
+(`filter_cell_ids`), not these columns.
 
 **Important**: Coordinates in edges.parquet are in native µm. The backend divides by
 `pixel_size` (from the reader) when serving to the frontend.
