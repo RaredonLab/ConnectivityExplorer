@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import math
 import sys
 import traceback
@@ -39,7 +40,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.readers.metadata_filter import MetadataFilter  # noqa: E402
 
-DATA_ROOT = Path(__file__).resolve().parent.parent.parent / "sample_data"
+# Overridable so the guard can be pointed at another checkout or a private
+# data drop; defaults to the repo's own sample_data.
+DATA_ROOT = Path(os.getenv("DATA_ROOT")
+                 or Path(__file__).resolve().parent.parent.parent / "sample_data")
 BASELINE = Path(__file__).resolve().parent / "golden_baseline.json"
 
 # Datasets to cover. Missing ones are skipped with a note rather than failing, so the
@@ -351,8 +355,18 @@ def compare(old: dict, new: dict, verbose: bool) -> int:
             print(f"\n[NEW DATASET] {ds} — not in baseline (re-record to adopt)")
             continue
         if ds not in new:
-            print(f"\n[MISSING] {ds} — in baseline but not produced now")
-            failures += 1
+            # Absent from this checkout, not broken. Five of the eight datasets in
+            # the baseline are gitignored (licence-restricted or simply large), so
+            # counting them as failures made the guard unusable for anyone but
+            # whoever recorded it — a fresh clone got four failures on a tree that
+            # is perfectly healthy. collect() already skips them; this half
+            # disagreed with that, and with the contract in CLAUDE.md.
+            #
+            # A dataset that *is* present but yields nothing still fails, because
+            # collect() records an entry for it either way — so a reader breaking
+            # badly enough to stop being detected is caught by the
+            # "not recognised as a dataset" path rather than hidden here.
+            print(f"  ·  {ds}: not in this checkout, skipped")
             continue
         o, n = old[ds], new[ds]
         keys = sorted(set(o) | set(n))
