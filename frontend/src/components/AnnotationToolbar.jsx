@@ -4,6 +4,7 @@
  */
 import React from "react";
 import { useStore } from "../store";
+import { usePanelSettings } from "../hooks/usePanelSettings";
 
 const MODES = [
   { id: "pan",    label: "Pan",        title: "Pan & zoom (default)" },
@@ -29,9 +30,14 @@ export default function AnnotationToolbar({ onScreenshot, panelIndex = 0 }) {
     panelCount, setPanelCount,
     requestZoomMatch,
     panelRotations, setPanelRotation,
-  } = useStore();
+  } = usePanelSettings(panelIndex);   // this toolbar belongs to one panel
 
-  const hasAnnotations = regions.length > 0 || measurements.length > 0;
+  // Count and clear only this panel's own annotations: the toolbar is rendered
+  // per panel, so a Clear here wiping the other panel's work would be a
+  // surprise, and the button greying out because the *other* panel is empty
+  // would be worse.
+  const mine = (a) => a.filter((x) => (x.panelIndex ?? 0) === panelIndex);
+  const hasAnnotations = mine(regions).length > 0 || mine(measurements).length > 0;
   const isSplit = panelCount >= 2;
   const rotation = panelRotations[panelIndex] ?? 0;
 
@@ -162,8 +168,8 @@ export default function AnnotationToolbar({ onScreenshot, panelIndex = 0 }) {
         <>
           <div style={SEP} />
           <button
-            title="Clear all annotations and measurements"
-            onClick={clearAnnotations}
+            title="Clear this panel's annotations and measurements"
+            onClick={() => clearAnnotations(panelIndex)}
             style={{ ...BTN, color: "#c44" }}
           >
             Clear

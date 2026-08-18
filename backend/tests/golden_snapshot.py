@@ -311,8 +311,13 @@ def probe_edges(dataset_dir: Path, pixel_size: float, p: Probes) -> None:
                     continue
                 spec = MetadataFilter.build(col, values=cv["categories"][:1])
                 p.record(f"edge__{key}__filter__{col}", lambda er=er, spec=spec:
-                         Probes.rows(er.query_grouped(density=1.0, edge_filter=spec)))
+                         Probes.rows(er.query_grouped(density=1.0, edge_filters=[spec])))
                 break
+
+        # Issue #59: the structural query is the tissue graph's ground truth and
+        # takes no filters, so its count must equal the unfiltered edge count.
+        p.record(f"edge__{key}__structure",
+                 lambda er=er: Probes.rows(er.query_structure(density=1.0)))
 
 
 def collect() -> dict:

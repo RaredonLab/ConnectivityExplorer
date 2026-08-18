@@ -758,6 +758,19 @@ write.csv(
   image is viewed, TissuePlex builds a tile pyramid (10–30 seconds); if the
   canvas looks blank, wait and refresh.</p>
 
+  <p>In <a href="#split-screen">split-screen mode</a> these dropdowns move into
+  each panel's own header instead, because the two panels can show different
+  datasets and an image or edge file only means something relative to one of
+  them.</p>
+
+  <div class="note">
+    <p>Changing a panel's dataset clears the settings that name a column, gene or
+    mechanism — metadata filters, the color-by field, the gene selection, the
+    mechanism checklist. It has to: those names come from the dataset you just
+    left. Sliders, palettes and layer visibility are kept. While the panels are
+    linked, this clears both; unlinked, only the panel you changed.</p>
+  </div>
+
   <div class="callout tip">
     <strong class="label">Tip:</strong> TissuePlex works best in
     <strong>Google Chrome</strong> or <strong>Firefox</strong>. Switch to Chrome
@@ -891,10 +904,9 @@ write.csv(
   <ul>
     <li><strong>Cell segments</strong> — only matching cells are drawn, and only
     they can be clicked or captured by a region selection.</li>
-    <li><strong>Edges and the tissue graph</strong> — an edge is drawn only when
-    <em>both</em> of its endpoints match. The point of narrowing to two or three
-    cell types is the signalling within that subset, and an edge with one endpoint
-    outside would run off to a cell that is not on screen.</li>
+    <li><strong>Nothing else.</strong> The cell filter does not touch edges or the
+    tissue graph — filtering cells and filtering edges are independent actions. To
+    narrow the edges, use the sending and receiving filters described below.</li>
     <li><strong>Transcripts are not filtered.</strong> Several platforms ship no
     transcript-to-cell assignment at all, so there is nothing to match on.</li>
   </ul>
@@ -908,15 +920,50 @@ write.csv(
     <span class="ui">Cell Segments</span> updates to describe the subset.
   </div>
 
-  <h3>Filtering edges</h3>
-  <p>The <span class="ui">Edge Filter</span> inside <span class="ui">Edge
-  Data</span> works the same way but on columns of the edge table itself, including
-  annotations from an <code>edge-metadata/</code> folder — a curation call, a
-  confidence score, a review flag. It composes with the cell filter: set both and
-  you see only the annotated edges among your chosen cells.</p>
-  <p>This is distinct from the <span class="ui">LRM Mechanisms</span> checklist
-  below it. The checklist chooses which <em>mechanisms</em> are scored on every
-  edge; the edge filter chooses which <em>cell pairs</em> are drawn at all.</p>
+  <h3>Filtering edges by sending and receiving cell</h3>
+  <p><span class="ui">Edge Filter</span> inside <span class="ui">Edge Data</span>
+  has two dropdowns side by side — <span class="ui">Sending cell</span> and
+  <span class="ui">Receiving cell</span>. Each offers <strong>any cell metadata
+  column</strong>, the same list the cell filter uses, and each constrains one end
+  of an edge.</p>
+
+  <ul>
+    <li>Set <strong>one</strong> and that end is constrained while the other is
+    free — "everything sent from crypt cells, to anywhere".</li>
+    <li>Set <strong>both</strong> and you get the intersection: senders in one
+    group, receivers in the other. This is how you ask for
+    fibroblast&nbsp;&rarr;&nbsp;endothelial signalling and nothing else.</li>
+  </ul>
+
+  <div class="note">
+    <p>These are <strong>independent of the Cell Filter</strong> above. Narrowing
+    the cells you draw does not narrow the edges, and vice versa. An edge may
+    therefore terminate on a cell that is not currently drawn — that is intended,
+    so the graph structure can be read on its own terms.</p>
+  </div>
+
+  <p>Below the two dropdowns, a third filter works on columns of the
+  <em>edge table itself</em>, including annotations from an
+  <code>edge-metadata/</code> folder — a curation call, a confidence score, a
+  review flag.</p>
+
+  <p>All of these are distinct from the <span class="ui">LRM Mechanisms</span>
+  checklist. The checklist chooses which <em>mechanisms</em> are scored on every
+  edge; the filters choose which <em>cell pairs</em> are drawn at all.</p>
+
+  <h3>The order things happen in</h3>
+  <p>Understanding this makes the controls predictable:</p>
+  <ol>
+    <li>every edge in view</li>
+    <li><strong>density</strong> — keeps a spatially random fraction</li>
+    <li>the result is the <strong>Tissue Graph</strong> layer</li>
+    <li><strong>sending</strong>, then <strong>receiving</strong>, then the
+    edge-table filter</li>
+    <li>the result is the <strong>Edge Data</strong> layer</li>
+  </ol>
+  <p>Because the edge data is filtered <em>from</em> the tissue graph, it can never
+  appear where there is no graph edge beneath it. Both layers respond to the one
+  density slider and stay aligned as you move it.</p>
 </section>
 
 
@@ -989,6 +1036,16 @@ write.csv(
   showing which cells are spatial neighbors, independent of any LRM information.
   Each line indicates spatial adjacency between two cells. Use the checkbox to
   toggle it and the opacity slider to adjust its visual weight.</p>
+
+  <div class="note">
+    <p>The tissue graph is <strong>ground truth</strong>: the total set of edges in
+    view. No filter narrows it — it is shown or hidden, nothing else. Only the
+    density slider changes how many of its lines are drawn, and that applies
+    equally to the Edge Data layer on top, so the two always align.</p>
+    <p>Use <strong>opacity</strong>, not density, to make it recede behind the edge
+    data. Lowering density removes lines from a layer whose whole purpose is to
+    show the complete structure.</p>
+  </div>
 </section>
 
 
@@ -1113,6 +1170,37 @@ write.csv(
   shows the barcode ID, all metadata values for that cell, and the current
   color-by value highlighted. Click on empty canvas to dismiss.</p>
 
+  <h3>The Local Neighbourhood</h3>
+  <p>With a cell selected, <span class="ui">show local neighbourhood</span> at the
+  bottom of the info panel reveals everything that cell is connected to in the
+  tissue graph. The canvas marks the clicked cell in white, its connected
+  neighbours in yellow, and draws a circle at the distance of the furthest one.
+  The panel reports:</p>
+
+  <ul>
+    <li><strong>neighbours</strong> and <strong>local edges</strong> — how many
+    cells it touches, and how many directed edges that is;</li>
+    <li><strong>radius</strong> in µm, so the reach can be quoted without
+    measuring it off the screen;</li>
+    <li><strong>composition</strong> — the neighbours broken down by whichever
+    metadata column you are colouring cells by;</li>
+    <li><strong>mechanisms</strong> — the strongest LRMs across its edges.</li>
+  </ul>
+
+  <div class="note">
+    <p>The circle is a convenience, not the answer. Connectivity is not evenly
+    spread — a cell at the edge of a tissue has neighbours on one side only — so
+    the circle usually contains cells it is <em>not</em> connected to. The yellow
+    marks are the neighbourhood; the circle only shows how far it reaches.</p>
+  </div>
+
+  <div class="note">
+    <p>The summary is computed on the full data, so it is unaffected by the
+    density slider, by the sending and receiving filters, or by how far you are
+    zoomed in. It describes the tissue, not the current view. Clicking another
+    cell replaces it; <span class="ui">hide highlight</span> removes it.</p>
+  </div>
+
   <h3>Clicking on an Edge or Tissue Graph Line</h3>
   <p>Click on any line in the Tissue Graph or Directed Edges layer to open the
   <strong>Edge Info Panel</strong>, showing the sending and receiving cell
@@ -1129,22 +1217,75 @@ write.csv(
 <!-- ── Split screen ───────────────────────────────────────────────────── -->
 <section id="split-screen">
   <h2 class="section-title">Split-Screen Mode</h2>
-  <p>Split-screen mode divides the viewer into two independent side-by-side
-  panels, each with its own pan and zoom position. Use it to compare two tissue
-  regions or to view the same region with different filter settings.</p>
+  <p>Split-screen mode divides the viewer into two side-by-side panels. Each has
+  its own pan and zoom, and <strong>each can show a different dataset</strong> —
+  so you can put two samples, two platforms, or two timepoints next to each
+  other. Both panels can also show the same dataset rendered two different ways.</p>
 
   <ul>
     <li>Click <span class="ui">⊞ Split</span> in the annotation toolbar to
     enter split-screen mode.</li>
     <li>Click <span class="ui">□ Single</span> to return to a single panel.</li>
-    <li>Both panels share all layer settings (visibility, color-by, LRM filter,
-    etc.) but have independent pan and zoom positions.</li>
+    <li>In split mode each panel gets its own <strong>dataset, image and edge-source
+    picker in its header</strong>, since those only mean something relative to one
+    dataset.</li>
   </ul>
+
+  <h3>Choosing Which Panel You Are Editing</h3>
+  <p>The sidebar drives both panels. At the top of it,
+  <span class="ui">Panel 1</span> / <span class="ui">Panel 2</span> tabs choose
+  which one your edits apply to, and a checkbox below them controls whether they
+  are linked:</p>
+
+  <ul>
+    <li><strong>Linked</strong> (the default): every change — opacity, palette,
+    color-by, filters, mechanism selection, edge geometry — applies to both
+    panels at once. This is what makes a side-by-side comparison actually
+    comparable.</li>
+    <li><strong>Unlinked</strong>: edits apply only to the tab you are on. Use
+    this to show cluster coloring on one side and gene expression on the other,
+    or two palettes, or two filters.</li>
+  </ul>
+
+  <div class="note">
+    <p>Switching the checkbox back on <strong>re-syncs</strong> both panels to the
+    tab you are currently on. That is deliberate: a control labelled "linked"
+    over two visibly different panels would not be telling you the truth. Pick
+    the tab whose look you want to keep <em>before</em> you re-link.</p>
+  </div>
+
+  <h3>Copying Settings From One Panel to the Other</h3>
+  <p>While the panels are unlinked, a
+  <span class="ui">copy panel 1 → panel 2</span> button appears under the
+  checkbox. It copies every display setting from the tab you are on to the other
+  panel in one go, and then leaves the panels independent again — so you can
+  establish a common baseline and diverge from it.</p>
+
+  <p>Settings that name something the other dataset does not have are dropped
+  rather than copied: a metadata filter on a column it lacks, a gene allowlist
+  with no genes in common, mechanisms absent from its edge file. Color range
+  limits also reset when the two panels show different datasets, because a range
+  measured in one dataset's units is meaningless in another's.</p>
 
   <h3>Matching Zoom Between Panels</h3>
   <p>The <span class="ui">⇔ Match</span> button sets the other panel to your
-  current panel's zoom level while each panel remains centered on its own
-  region.</p>
+  current panel's zoom while each panel stays centered on its own region.</p>
+
+  <div class="note">
+    <p>Match works in <strong>microns, not pixels</strong>, so the same physical
+    distance spans the same width on screen in both panels — exactly as a scale
+    bar would. This matters when the panels hold different platforms: 20% of a
+    6.5&nbsp;mm Visium capture area and 20% of a 55&nbsp;µm seqFISH region differ
+    by more than fifty-fold.</p>
+  </div>
+
+  <h3>Color Scales Across Panels</h3>
+  <p>The <span class="ui">shared colour scale across panels</span> checkbox, on
+  by default, makes both panels map color through one range computed across both.
+  Leave it on for any figure. Two panels that each auto-scaled to their own data
+  <em>look</em> comparable and are not — one panel's yellow might be 40 counts and
+  the other's 4,000. Turn it off only when one panel's range is so much narrower
+  that sharing flattens it, and say so in the legend.</p>
 </section>
 
 
@@ -1162,8 +1303,17 @@ write.csv(
     distance between them in micrometers.</li>
   </ul>
 
-  <p>The <span class="ui">Clear</span> button removes all regions and
-  measurements at once.</p>
+  <p>The <span class="ui">Clear</span> button removes the regions and
+  measurements belonging to <em>that panel</em> — each panel has its own toolbar,
+  so clearing one leaves the other's work alone.</p>
+
+  <div class="note">
+    <p>In split-screen mode, regions and measurements belong to the panel they
+    were drawn in and appear only there. They are stored in that dataset's
+    coordinates, so a region drawn on one tissue would land somewhere meaningless
+    if it were drawn on the other. Exported cell lists and measured distances
+    likewise resolve against the panel that produced them.</p>
+  </div>
 
   <h3>Exporting Cells Within a Region</h3>
   <p>Each drawn region appears in the Layer Panel's <strong>Regions</strong>
